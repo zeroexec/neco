@@ -1,161 +1,134 @@
 "use client";
 
-import React, { useState, use } from "react";
-import {
-  Search,
-  Plus,
-  Minus,
-  Trash2,
-  CreditCard,
-  Banknote,
-  QrCode,
-  CheckCircle2,
-  Utensils,
-  ShoppingBag,
-  Bike,
-  Receipt,
-  RotateCcw,
-} from "lucide-react";
+import React, { useState, useEffect, use } from "react";
+import { ShoppingBag as CartIcon, Search, Barcode, Loader2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-// Types
+import CartPanel, { CheckoutPayment } from "./components/CartPanel";
+
+// ===== Types =====
 interface Product {
   id: string;
+  shop_id: string;
+  sku?: string | null;
   name: string;
-  category: string;
+  category?: string | null;
   price: number;
-  stock: number;
-  image: string;
+  stock?: number | null;
+  image_url?: string | null;
+  is_available: boolean;
 }
 
 interface CartItem extends Product {
   quantity: number;
 }
 
-// Mock Products Data
-const MOCK_PRODUCTS: Product[] = [
-  {
-    id: "p1",
-    name: "Kopi Kenangan Mantan",
-    category: "Kopi",
-    price: 18000,
-    stock: 25,
-    image: "☕",
-  },
-  {
-    id: "p2",
-    name: "Americano Ice",
-    category: "Kopi",
-    price: 15000,
-    stock: 40,
-    image: "🧊",
-  },
-  {
-    id: "p3",
-    name: "Uji Matcha Latte",
-    category: "Non-Kopi",
-    price: 28000,
-    stock: 12,
-    image: "🍵",
-  },
-  {
-    id: "p4",
-    name: "Earl Grey Milk Tea",
-    category: "Non-Kopi",
-    price: 22000,
-    stock: 18,
-    image: "🧋",
-  },
-  {
-    id: "p5",
-    name: "Butter Croissant",
-    category: "Pastry",
-    price: 25000,
-    stock: 8,
-    image: "🥐",
-  },
-  {
-    id: "p6",
-    name: "Cheese Danish",
-    category: "Pastry",
-    price: 27000,
-    stock: 5,
-    image: "🧀",
-  },
-  {
-    id: "p7",
-    name: "French Fries",
-    category: "Snack",
-    price: 18000,
-    stock: 30,
-    image: "🍟",
-  },
-  {
-    id: "p8",
-    name: "Red Velvet Cake",
-    category: "Snack",
-    price: 32000,
-    stock: 6,
-    image: "🍰",
-  },
-];
-
-const CATEGORIES = ["Semua", "Kopi", "Non-Kopi", "Pastry", "Snack"];
-
-export default function POSPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function POSPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const storeId = resolvedParams.id;
 
-  // States
+  // States Produk & Kategori
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<string[]>(["Semua"]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // States Filter & Keranjang
   const [selectedCategory, setSelectedCategory] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [orderType, setOrderType] = useState<"dine-in" | "takeaway" | "delivery">("dine-in");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "qris" | "card">("cash");
-  const [cashGiven, setCashGiven] = useState<string>("");
-  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
-  const [lastTransaction, setLastTransaction] = useState<{
-    orderId: string;
-    total: number;
-    cash: number;
-    change: number;
-    items: CartItem[];
-  } | null>(null);
 
-  // Filter Products
-  const filteredProducts = MOCK_PRODUCTS.filter((product) => {
-    const matchesCategory =
-      selectedCategory === "Semua" || product.category === selectedCategory;
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // UI States
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
-  // Cart Operations
-  const addToCart = (product: Product) => {
+  // ===== Fetch Produk =====
+  const loadProducts = async () => {
+    try {
+      setIsLoadingProducts(true);
+      setErrorMessage(null);
+
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("shop_id", storeId)
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        setProducts([]);
+        setCategories(["Semua"]);
+      } else {
+        setProducts(data);
+        extractCategories(data);
+      }
+    } catch (err: any) {
+      console.error("Gagal mengambil data dari Supabase:", err);
+      setErrorMessage(err.message || "Gagal mengambil data dari server.");
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
+
+  const extractCategories = (items: Product[]) => {
+    const uniqueCats = Array.from(
+      new Set(items.map((item) => item.category).filter((cat): cat is string => Boolean(cat)))
+    );
+    setCategories(["Semua", ...uniqueCats]);
+  };
+
+  useEffect(() => {
+    if (storeId) {
+      loadProducts();
+    }
+  }, [storeId]);
+
+  // ===== Cart Handlers =====
+  const handleAddToCart = (product: Product) => {
+    if (!product.is_available) return;
+
+    const existing = cart.find((item) => item.id === product.id);
+    const currentQty = existing ? existing.quantity : 0;
+
+    if (
+      product.stock !== undefined &&
+      product.stock !== null &&
+      currentQty + 1 > product.stock
+    ) {
+      alert(`Stok ${product.name} tidak mencukupi (Sisa: ${product.stock})`);
+      return;
+    }
+
     setCart((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
       if (existing) {
         return prev.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
       return [...prev, { ...product, quantity: 1 }];
     });
   };
 
-  const updateQuantity = (id: string, delta: number) => {
+  const handleUpdateQuantity = (id: string, delta: number) => {
+    const product = products.find((p) => p.id === id);
+
     setCart((prev) =>
       prev
         .map((item) => {
           if (item.id === id) {
             const newQty = item.quantity + delta;
+
+            if (
+              delta > 0 &&
+              product?.stock !== undefined &&
+              product?.stock !== null &&
+              newQty > product.stock
+            ) {
+              alert(`Stok maksimum tercapai (${product.stock})`);
+              return item;
+            }
+
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
@@ -164,78 +137,158 @@ export default function POSPage({
     );
   };
 
-  const clearCart = () => setCart([]);
+  const handleClearCart = () => setCart([]);
 
-  // Calculations
-  const subtotal = cart.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
-  const tax = Math.round(subtotal * 0.1); // Tax 10%
-  const grandTotal = subtotal + tax;
+  // Total untuk floating bar mobile
+  const grandTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const totalItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  const numCashGiven = parseFloat(cashGiven) || 0;
-  const changeAmount = paymentMethod === "cash" ? numCashGiven - grandTotal : 0;
-
-  // Checkout Handler
-  const handleCheckout = () => {
+  // ===== Checkout =====
+  const handleCheckout = async (payment: CheckoutPayment) => {
     if (cart.length === 0) return;
-    if (paymentMethod === "cash" && numCashGiven < grandTotal) return;
+    if (payment.cashGiven < grandTotal) return;
 
-    const newTx = {
-      orderId: `POS-${Math.floor(100000 + Math.random() * 900000)}`,
-      total: grandTotal,
-      cash: paymentMethod === "cash" ? numCashGiven : grandTotal,
-      change: changeAmount,
-      items: [...cart],
-    };
+    setIsSubmitting(true);
 
-    setLastTransaction(newTx);
-    setIsSuccessModalOpen(true);
+    try {
+      // Step A: Insert Order
+      const { data: orderData, error: orderError } = await supabase
+        .from("orders")
+        .insert({
+          shop_id: storeId,
+          customer_name: "Pelanggan Umum",
+          subtotal: grandTotal,
+          discount_amount: 0,
+          tax: 0,
+          total_amount: grandTotal,
+          payment_method: "cash",
+          cash_given: payment.cashGiven,
+          change_amount: payment.changeAmount,
+          order_type: "dine-in",
+          status: "completed",
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+
+      if (orderData) {
+        // Step B: Insert Items
+        const orderItems = cart.map((item) => ({
+          order_ref_id: orderData.id,
+          product_id: item.id,
+          product_name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          subtotal: item.price * item.quantity,
+        }));
+
+        const { error: itemsError } = await supabase
+          .from("order_items")
+          .insert(orderItems);
+
+        if (itemsError) throw itemsError;
+
+        // Step C: Update Stok
+        for (const item of cart) {
+          if (item.stock !== undefined && item.stock !== null) {
+            const newStock = Math.max(0, item.stock - item.quantity);
+            await supabase
+              .from("products")
+              .update({ stock: newStock })
+              .eq("id", item.id);
+          }
+        }
+
+        const kembalian =
+          payment.changeAmount > 0
+            ? `\nKembalian: Rp ${payment.changeAmount.toLocaleString("id-ID")}`
+            : "";
+        alert(`Transaksi berhasil disimpan!${kembalian}`);
+
+        setCart([]);
+        await loadProducts();
+        setIsMobileCartOpen(false);
+      }
+    } catch (err: any) {
+      console.error("Gagal simpan transaksi:", err);
+      alert(err.message || "Gagal menyimpan transaksi.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleResetForNewOrder = () => {
-    setCart([]);
-    setCashGiven("");
-    setIsSuccessModalOpen(false);
+  // ===== Katalog: filter & render =====
+  const filteredProducts = products.filter((product) => {
+    const matchesCategory =
+      selectedCategory === "Semua" || product.category === selectedCategory;
+
+    const query = searchQuery.toLowerCase();
+    const matchesSearch =
+      product.name.toLowerCase().includes(query) ||
+      (product.sku && product.sku.toLowerCase().includes(query));
+
+    return matchesCategory && matchesSearch;
+  });
+
+  const renderProductImage = (product: Product) => {
+    const imgSource = product.image_url;
+    if (imgSource && (imgSource.startsWith("http://") || imgSource.startsWith("https://"))) {
+      return (
+        <img
+          src={imgSource}
+          alt={product.name}
+          className="w-full h-full object-cover rounded-xl"
+        />
+      );
+    }
+    return <span className="text-2xl">📦</span>;
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-6rem)] -m-4 sm:-m-6 lg:-m-8 p-4 sm:p-6 lg:p-8 bg-slate-100 overflow-hidden">
-      {/* ================= LEFT SECTION: CATALOG ================= */}
-      <div className="flex-1 flex flex-col h-full space-y-4 min-w-0">
-        {/* Header & Search */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+    <div className="relative flex flex-col lg:flex-row h-[calc(100dvh-3.5rem)] md:h-screen -m-4 sm:-m-6 lg:-m-8 bg-slate-50 font-sans overflow-hidden">
+      {/* ===== Katalog (Kiri) ===== */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden p-3 lg:p-5 gap-3">
+        {/* Top Bar / Search */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
           <div>
-            <h1 className="text-lg font-extrabold text-slate-900">
-              Kasir (POS)
+            <h1 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Barcode className="w-5 h-5 text-emerald-600" /> Kasir Penjualan Toko
             </h1>
-            <p className="text-xs text-slate-500">
-              Pilih produk untuk ditambahkan ke keranjang pesanan
-            </p>
+            <p className="text-[11px] text-slate-400">Pilih atau scan barcode barang</p>
           </div>
 
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full sm:w-72">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Cari menu produk..."
+              placeholder="Cari nama barang / SKU..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium"
             />
           </div>
         </div>
 
-        {/* Category Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0 pb-1">
-          {CATEGORIES.map((cat) => (
+        {/* Error Alert */}
+        {errorMessage && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-xl text-xs flex items-center justify-between gap-2">
+            <span>{errorMessage}</span>
+            <button onClick={loadProducts} className="font-bold hover:underline shrink-0">
+              Coba lagi
+            </button>
+          </div>
+        )}
+
+        {/* Categories */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0 py-0.5">
+          {categories.map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                 selectedCategory === cat
-                  ? "bg-emerald-600 text-white shadow-xs"
+                  ? "bg-slate-900 text-white shadow-xs"
                   : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-50"
               }`}
             >
@@ -245,324 +298,121 @@ export default function POSPage({
         </div>
 
         {/* Products Grid */}
-        <div className="flex-1 overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
-            {filteredProducts.map((product) => {
-              const cartItem = cart.find((item) => item.id === product.id);
-              const qtyInCart = cartItem?.quantity || 0;
-
-              return (
-                <div
-                  key={product.id}
-                  onClick={() => addToCart(product)}
-                  className={`group relative bg-white border p-3.5 rounded-2xl cursor-pointer hover:border-emerald-500 transition-all shadow-xs flex flex-col justify-between ${
-                    qtyInCart > 0 ? "border-emerald-500 ring-2 ring-emerald-500/10" : "border-slate-200/80"
-                  }`}
-                >
-                  {qtyInCart > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-emerald-600 text-white text-[11px] font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md z-10">
-                      {qtyInCart}
-                    </span>
-                  )}
-
-                  <div className="space-y-2">
-                    <div className="w-full h-20 bg-slate-50 rounded-xl flex items-center justify-center text-4xl group-hover:scale-105 transition-transform">
-                      {product.image}
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        {product.category}
-                      </p>
-                      <h3 className="text-xs font-bold text-slate-800 line-clamp-1 mt-0.5">
-                        {product.name}
-                      </h3>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100">
-                    <span className="text-xs font-extrabold text-emerald-600">
-                      Rp {product.price.toLocaleString("id-ID")}
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      Stok: {product.stock}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* ================= RIGHT SECTION: CART & CHECKOUT ================= */}
-      <div className="w-full lg:w-96 bg-white border border-slate-200/80 rounded-2xl shadow-xs flex flex-col h-full shrink-0">
-        {/* Cart Header */}
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div>
-            <h2 className="font-bold text-slate-900 text-sm">
-              Detail Pesanan
-            </h2>
-            <p className="text-[11px] text-slate-400">
-              {cart.reduce((a, b) => a + b.quantity, 0)} Item dipilih
-            </p>
-          </div>
-          {cart.length > 0 && (
-            <button
-              onClick={clearCart}
-              className="text-xs text-rose-600 font-semibold hover:underline flex items-center gap-1"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Bersihkan</span>
-            </button>
-          )}
-        </div>
-
-        {/* Order Type Toggle */}
-        <div className="p-3 border-b border-slate-100 bg-slate-50 shrink-0">
-          <div className="grid grid-cols-3 gap-1 bg-white p-1 rounded-xl border border-slate-200/80 text-xs font-semibold text-slate-600">
-            <button
-              onClick={() => setOrderType("dine-in")}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                orderType === "dine-in"
-                  ? "bg-emerald-600 text-white font-bold"
-                  : "hover:bg-slate-50"
-              }`}
-            >
-              <Utensils className="w-3.5 h-3.5" />
-              <span>Dine In</span>
-            </button>
-            <button
-              onClick={() => setOrderType("takeaway")}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                orderType === "takeaway"
-                  ? "bg-emerald-600 text-white font-bold"
-                  : "hover:bg-slate-50"
-              }`}
-            >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              <span>Takeaway</span>
-            </button>
-            <button
-              onClick={() => setOrderType("delivery")}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                orderType === "delivery"
-                  ? "bg-emerald-600 text-white font-bold"
-                  : "hover:bg-slate-50"
-              }`}
-            >
-              <Bike className="w-3.5 h-3.5" />
-              <span>Delivery</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Cart Item List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-2">
-              <Receipt className="w-12 h-12 stroke-1 text-slate-300" />
-              <p className="text-xs font-medium">Keranjang masih kosong</p>
-              <p className="text-[10px] text-slate-400">
-                Klik produk di sebelah kiri untuk ditambahkan
-              </p>
+        <div className="flex-1 overflow-y-auto px-2 pt-3 pb-24 lg:pb-3">
+          {isLoadingProducts ? (
+            <div className="h-full flex items-center justify-center text-slate-400 text-xs">
+              <Loader2 className="w-5 h-5 animate-spin mr-2 text-emerald-600" /> Memuat data produk...
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs">
+              <p>Produk tidak ditemukan.</p>
             </div>
           ) : (
-            cart.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50 border border-slate-100"
-              >
-                <div className="min-w-0 flex-1">
-                  <h4 className="text-xs font-bold text-slate-800 truncate">
-                    {item.name}
-                  </h4>
-                  <p className="text-[11px] font-semibold text-emerald-600">
-                    Rp {(item.price * item.quantity).toLocaleString("id-ID")}
-                  </p>
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              {filteredProducts.map((product) => {
+                const cartItem = cart.find((item) => item.id === product.id);
+                const qtyInCart = cartItem?.quantity || 0;
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => updateQuantity(item.id, -1)}
-                    className="p-1 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-xs font-bold w-5 text-center">
-                    {item.quantity}
-                  </span>
-                  <button
-                    onClick={() => updateQuantity(item.id, 1)}
-                    className="p-1 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+                const isOutOfStock =
+                  !product.is_available ||
+                  (product.stock !== undefined && product.stock !== null && product.stock <= 0);
 
-        {/* Payment & Calculation Footer */}
-        <div className="p-4 border-t border-slate-100 space-y-3 bg-slate-50 shrink-0">
-          {/* Summary Prices */}
-          <div className="space-y-1.5 text-xs">
-            <div className="flex justify-between text-slate-500">
-              <span>Subtotal</span>
-              <span>Rp {subtotal.toLocaleString("id-ID")}</span>
-            </div>
-            <div className="flex justify-between text-slate-500">
-              <span>Pajak PB1 (10%)</span>
-              <span>Rp {tax.toLocaleString("id-ID")}</span>
-            </div>
-            <div className="flex justify-between font-extrabold text-sm text-slate-900 pt-1 border-t border-slate-200">
-              <span>Total Bayar</span>
-              <span className="text-emerald-600">
-                Rp {grandTotal.toLocaleString("id-ID")}
-              </span>
-            </div>
-          </div>
-
-          {/* Payment Method Tabs */}
-          <div className="grid grid-cols-3 gap-1.5 text-xs font-semibold pt-1">
-            <button
-              onClick={() => setPaymentMethod("cash")}
-              className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                paymentMethod === "cash"
-                  ? "bg-emerald-50 border-emerald-500 text-emerald-700 font-bold"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <Banknote className="w-4 h-4" />
-              <span>Tunai</span>
-            </button>
-            <button
-              onClick={() => setPaymentMethod("qris")}
-              className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                paymentMethod === "qris"
-                  ? "bg-emerald-50 border-emerald-500 text-emerald-700 font-bold"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <QrCode className="w-4 h-4" />
-              <span>QRIS</span>
-            </button>
-            <button
-              onClick={() => setPaymentMethod("card")}
-              className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                paymentMethod === "card"
-                  ? "bg-emerald-50 border-emerald-500 text-emerald-700 font-bold"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <CreditCard className="w-4 h-4" />
-              <span>Kartu</span>
-            </button>
-          </div>
-
-          {/* Cash Input & Preset Buttons */}
-          {paymentMethod === "cash" && (
-            <div className="space-y-2 pt-1">
-              <input
-                type="number"
-                placeholder="Jumlah Uang Diterima"
-                value={cashGiven}
-                onChange={(e) => setCashGiven(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-semibold text-slate-800"
-              />
-              <div className="flex gap-1.5">
-                {[grandTotal, 50000, 100000].map((amt) => (
-                  <button
-                    key={amt}
-                    onClick={() => setCashGiven(amt.toString())}
-                    className="flex-1 py-1 text-[10px] font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600"
+                return (
+                  <div
+                    key={product.id}
+                    onClick={() => !isOutOfStock && handleAddToCart(product)}
+                    className={`group relative bg-white border p-3 rounded-2xl transition-all flex flex-col justify-between select-none ${
+                      isOutOfStock
+                        ? "opacity-50 cursor-not-allowed border-slate-200 bg-slate-50"
+                        : "cursor-pointer hover:border-emerald-500 hover:shadow-md"
+                    } ${
+                      qtyInCart > 0
+                        ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-xs"
+                        : "border-slate-200"
+                    }`}
                   >
-                    {amt === grandTotal
-                      ? "Uang Pas"
-                      : `Rp ${(amt / 1000).toFixed(0)}rb`}
-                  </button>
-                ))}
-              </div>
-              {numCashGiven > 0 && (
-                <div className="flex justify-between text-xs font-bold pt-1">
-                  <span className="text-slate-500">Kembalian:</span>
-                  <span
-                    className={
-                      changeAmount >= 0 ? "text-emerald-600" : "text-rose-600"
-                    }
-                  >
-                    Rp {changeAmount.toLocaleString("id-ID")}
-                  </span>
-                </div>
-              )}
+                    {qtyInCart > 0 && (
+                      <span className="absolute -top-2 -right-2 bg-emerald-600 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-md z-10">
+                        {qtyInCart}
+                      </span>
+                    )}
+
+                    <div className="space-y-2">
+                      <div className="w-full h-16 sm:h-20 bg-slate-50 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform overflow-hidden">
+                        {renderProductImage(product)}
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                            {product.category || "Umum"}
+                          </span>
+                          {product.sku && (
+                            <span className="text-[9px] font-mono text-slate-400">
+                              {product.sku}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-xs font-bold text-slate-800 line-clamp-1">
+                          {product.name}
+                        </h3>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between pt-2 border-t border-slate-100">
+                      <span className="text-xs font-extrabold text-emerald-600">
+                        Rp {Number(product.price).toLocaleString("id-ID")}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          isOutOfStock ? "text-rose-500" : "text-slate-500"
+                        }`}
+                      >
+                        {isOutOfStock
+                          ? "Habis"
+                          : product.stock !== undefined && product.stock !== null
+                          ? `Stok: ${product.stock}`
+                          : "Tersedia"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
-
-          {/* Checkout Button */}
-          <button
-            disabled={
-              cart.length === 0 ||
-              (paymentMethod === "cash" && numCashGiven < grandTotal)
-            }
-            onClick={handleCheckout}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Proses Bayar (Rp {grandTotal.toLocaleString("id-ID")})</span>
-          </button>
         </div>
       </div>
 
-      {/* ================= TRANSACTION SUCCESS MODAL ================= */}
-      {isSuccessModalOpen && lastTransaction && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-5 text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-10 h-10" />
-            </div>
+      {/* ===== Cart (Kanan) - komponen independen ===== */}
+      <CartPanel
+        cart={cart}
+        onUpdateQuantity={handleUpdateQuantity}
+        onClearCart={handleClearCart}
+        onCheckout={handleCheckout}
+        isSubmitting={isSubmitting}
+        isOpen={isMobileCartOpen}
+        onClose={() => setIsMobileCartOpen(false)}
+      />
 
-            <div>
-              <h3 className="text-lg font-black text-slate-900">
-                Transaksi Berhasil!
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {lastTransaction.orderId}
-              </p>
-            </div>
-
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-left space-y-2 text-xs">
-              <div className="flex justify-between text-slate-500">
-                <span>Total Belanja:</span>
-                <span className="font-bold text-slate-900">
-                  Rp {lastTransaction.total.toLocaleString("id-ID")}
+      {/* Floating Button Mobile */}
+      <div className="lg:hidden fixed bottom-4 left-4 right-4 z-30">
+        <button
+          onClick={() => setIsMobileCartOpen(true)}
+          className="w-full bg-slate-900 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between font-bold text-xs"
+        >
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <CartIcon className="w-5 h-5" />
+              {totalItemCount > 0 && (
+                <span className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center">
+                  {totalItemCount}
                 </span>
-              </div>
-              <div className="flex justify-between text-slate-500">
-                <span>Bayar ({paymentMethod.toUpperCase()}):</span>
-                <span className="font-bold text-slate-900">
-                  Rp {lastTransaction.cash.toLocaleString("id-ID")}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-500 pt-1 border-t border-slate-200 font-bold">
-                <span className="text-slate-700">Kembalian:</span>
-                <span className="text-emerald-600">
-                  Rp {lastTransaction.change.toLocaleString("id-ID")}
-                </span>
-              </div>
+              )}
             </div>
-
-            <div className="space-y-2">
-              <button
-                onClick={handleResetForNewOrder}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Transaksi Baru</span>
-              </button>
-            </div>
+            <span>{totalItemCount} Barang Terpilih</span>
           </div>
-        </div>
-      )}
+          <span className="text-emerald-400">Rp {grandTotal.toLocaleString("id-ID")} →</span>
+        </button>
+      </div>
     </div>
   );
 }
