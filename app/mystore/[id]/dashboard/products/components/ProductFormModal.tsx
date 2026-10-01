@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { X, Plus, Trash2, Layers, Loader2, Upload } from "lucide-react";
+import { X, Plus, Trash2, Layers, Loader2, Upload, Package } from "lucide-react";
 
 export interface Product {
   id: string;
@@ -20,6 +20,7 @@ export interface Product {
   cost_price?: number | null;
   unit?: string | null;
   min_stock?: number | null;
+  track_stock?: boolean;
 }
 
 interface VariantOption {
@@ -108,6 +109,17 @@ const compressImage = (file: File, maxWidth = 1080, quality = 0.8): Promise<File
   });
 };
 
+const EMPTY_FORM = {
+  sku: "",
+  name: "",
+  category: "",
+  price: "",
+  track_stock: true,
+  stock: "",
+  min_stock: "",
+  unit: "pcs",
+};
+
 export default function ProductFormModal({
   isOpen,
   storeId,
@@ -120,12 +132,7 @@ export default function ProductFormModal({
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
-  const [productForm, setProductForm] = useState({
-    sku: "",
-    name: "",
-    category: "",
-    price: "",
-  });
+  const [productForm, setProductForm] = useState(EMPTY_FORM);
   const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
 
   // Cleanup Object URL untuk mencegah memory leak
@@ -146,6 +153,10 @@ export default function ProductFormModal({
         name: editingProduct.name,
         category: editingProduct.category || "",
         price: editingProduct.price.toString(),
+        track_stock: editingProduct.track_stock ?? true,
+        stock: editingProduct.stock?.toString() ?? "",
+        min_stock: editingProduct.min_stock?.toString() ?? "",
+        unit: editingProduct.unit || "pcs",
       });
 
       setImagePreview(editingProduct.image_url || null);
@@ -195,12 +206,7 @@ export default function ProductFormModal({
 
       fetchVariants();
     } else {
-      setProductForm({
-        sku: "",
-        name: "",
-        category: "",
-        price: "",
-      });
+      setProductForm(EMPTY_FORM);
       setImagePreview(null);
       setImageFile(null);
       setVariantGroups([]);
@@ -304,6 +310,20 @@ export default function ProductFormModal({
     e.preventDefault();
     if (!productForm.name || !productForm.price) return;
 
+    // Validasi stok jika dihitung
+    if (productForm.track_stock) {
+      const stockNum = Number(productForm.stock);
+      const minStockNum = Number(productForm.min_stock || 0);
+      if (productForm.stock !== "" && (isNaN(stockNum) || stockNum < 0)) {
+        alert("Stok tidak boleh negatif.");
+        return;
+      }
+      if (isNaN(minStockNum) || minStockNum < 0) {
+        alert("Stok minimum tidak boleh negatif.");
+        return;
+      }
+    }
+
     try {
       setIsSubmitting(true);
 
@@ -316,6 +336,13 @@ export default function ProductFormModal({
         }
       }
 
+      const stockValue = productForm.track_stock
+        ? Math.floor(Number(productForm.stock) || 0)
+        : 0;
+      const minStockValue = productForm.track_stock
+        ? Math.floor(Number(productForm.min_stock) || 0)
+        : 0;
+
       const payload = {
         shop_id: storeId,
         sku: productForm.sku || null,
@@ -323,6 +350,12 @@ export default function ProductFormModal({
         category: productForm.category || null,
         price: Number(productForm.price),
         image_url: imageUrl,
+        track_stock: productForm.track_stock,
+        stock: stockValue,
+        min_stock: minStockValue,
+        unit: productForm.unit.trim() || "pcs",
+        // Selalu tersedia -> true. Jika stok dihitung -> tersedia selama stok > 0
+        is_available: productForm.track_stock ? stockValue > 0 : true,
         updated_at: new Date().toISOString(),
       };
 
@@ -555,6 +588,97 @@ export default function ProductFormModal({
                 className="w-full px-1 py-2 bg-transparent border-b-2 border-zinc-300 rounded-none text-zinc-900 text-sm placeholder:text-zinc-400 focus:outline-none focus:border-emerald-600 transition-colors font-semibold"
               />
             </div>
+          </div>
+
+          {/* Section: Stok */}
+          <div className="pt-4 border-t border-zinc-100 space-y-4">
+            <div className="flex items-center gap-2 font-semibold text-zinc-900 text-base">
+              <Package className="w-4 h-4 text-emerald-600" />
+              <span>Stok</span>
+            </div>
+
+            {/* Switch Selalu Tersedia */}
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!productForm.track_stock}
+                onClick={() =>
+                  setProductForm({
+                    ...productForm,
+                    track_stock: !productForm.track_stock,
+                  })
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  !productForm.track_stock ? "bg-emerald-600" : "bg-zinc-300"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    !productForm.track_stock ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+              <div>
+                <span className="font-medium text-zinc-800 text-sm block">
+                  Selalu tersedia
+                </span>
+                <span className="text-xs text-zinc-500">
+                  Aktifkan jika produk tidak perlu dihitung stoknya (mis. minuman diseduh langsung).
+                </span>
+              </div>
+            </label>
+
+            {productForm.track_stock && (
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block font-medium text-zinc-800 mb-1 text-sm">
+                    Stok
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="0"
+                    value={productForm.stock}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, stock: e.target.value })
+                    }
+                    className="w-full px-1 py-2 bg-transparent border-b-2 border-zinc-300 rounded-none text-zinc-900 text-sm placeholder:text-zinc-400 focus:outline-none focus:border-emerald-600 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-zinc-800 mb-1 text-sm">
+                    Stok Minimum
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="5"
+                    value={productForm.min_stock}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, min_stock: e.target.value })
+                    }
+                    className="w-full px-1 py-2 bg-transparent border-b-2 border-zinc-300 rounded-none text-zinc-900 text-sm placeholder:text-zinc-400 focus:outline-none focus:border-emerald-600 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-zinc-800 mb-1 text-sm">
+                    Satuan
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="pcs"
+                    value={productForm.unit}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, unit: e.target.value })
+                    }
+                    className="w-full px-1 py-2 bg-transparent border-b-2 border-zinc-300 rounded-none text-zinc-900 text-sm placeholder:text-zinc-400 focus:outline-none focus:border-emerald-600 transition-colors"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section: Varian Produk */}

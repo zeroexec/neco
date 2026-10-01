@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase";
 import {
   Search,
   MapPin,
-  Star,
   Store,
   ChevronRight,
   Heart,
@@ -25,19 +24,30 @@ import {
   Loader2,
 } from "lucide-react";
 
-// Interface sesuai tabel shops & profiles di Supabase
+// Jam operasional per hari (tabel shop_operating_hours)
+// day_of_week: 0 = Minggu, 1 = Senin, ... 6 = Sabtu
+interface OperatingHour {
+  day_of_week: number;
+  open_time: string | null; // "HH:mm:ss"
+  close_time: string | null; // "HH:mm:ss"
+  is_closed: boolean;
+}
+
+// Interface sesuai tabel shops di Supabase
 interface ShopItem {
   id: string;
   name: string;
   category: string;
   location: string;
-  rating: number;
   is_open: boolean;
   avatar_url: string | null;
   address_detail: string | null;
+  whatsapp_number: string | null;
   created_at: string;
+  shop_operating_hours: OperatingHour[] | null;
 }
 
+// Interface sesuai tabel profiles di Supabase
 interface UserProfile {
   id: string;
   full_name: string | null;
@@ -54,6 +64,108 @@ const CATEGORIES = [
   "Kecantikan",
 ];
 
+// ---------- Helper: waktu & status buka ----------
+
+const WEEKDAY_TO_DOW: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+// Ambil hari & menit sekarang berdasarkan zona waktu Asia/Jakarta (WIB)
+function getJakartaNow() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+
+  const weekday = parts.find((p) => p.type === "weekday")?.value ?? "Sun";
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+
+  return { dow: WEEKDAY_TO_DOW[weekday] ?? 0, minutes: hour * 60 + minute };
+}
+
+const toMinutes = (time: string) => {
+  const [h, m] = time.split(":");
+  return Number(h) * 60 + Number(m);
+};
+
+const toHHmm = (time: string) => time.slice(0, 5);
+
+interface ShopStatus {
+  label: string;
+  isOpenNow: boolean;
+  todayHours: string | null; // contoh: "08:00–22:00"
+}
+
+function getShopStatus(
+  shop: ShopItem,
+  now: { dow: number; minutes: number }
+): ShopStatus {
+  const today = shop.shop_operating_hours?.find(
+    (h) => h.day_of_week === now.dow
+  );
+
+  const hasHours =
+    !!today && !today.is_closed && !!today.open_time && !!today.close_time;
+  const todayHours = hasHours
+    ? `${toHHmm(today!.open_time!)}–${toHHmm(today!.close_time!)}`
+    : null;
+
+  // Pemilik menutup toko secara manual lewat toggle is_open
+  if (!shop.is_open) {
+    return { label: "Tutup Sementara", isOpenNow: false, todayHours };
+  }
+
+  // Belum ada jadwal untuk hari ini: ikuti status is_open
+  if (!today) {
+    return { label: "Buka Sekarang", isOpenNow: true, todayHours: null };
+  }
+
+  // Libur di hari ini
+  if (!hasHours) {
+    return { label: "Libur Hari Ini", isOpenNow: false, todayHours: null };
+  }
+
+  const openAt = toMinutes(today!.open_time!);
+  const closeAt = toMinutes(today!.close_time!);
+
+  if (now.minutes < openAt) {
+    return {
+      label: `Buka pukul ${toHHmm(today!.open_time!)}`,
+      isOpenNow: false,
+      todayHours,
+    };
+  }
+  if (now.minutes >= closeAt) {
+    return { label: "Tutup", isOpenNow: false, todayHours };
+  }
+  return { label: "Buka Sekarang", isOpenNow: true, todayHours };
+}
+
+// ---------- Helper: WhatsApp ----------
+
+function buildWhatsAppUrl(rawNumber: string | null, shopName: string) {
+  if (!rawNumber) return null;
+  const digits = rawNumber.replace(/\D/g, "");
+  if (!digits) return null;
+
+  // 08xxx -> 628xxx
+  const international = digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+  const text = encodeURIComponent(
+    `Halo ${shopName}, saya melihat toko Anda di NECO.`
+  );
+  return `https://wa.me/${international}?text=${text}`;
+}
+
 export default function NecoMobileDirectory() {
   const [selectedCategory, setSelectedCategory] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
@@ -65,6 +177,14 @@ export default function NecoMobileDirectory() {
   const [shops, setShops] = useState<ShopItem[]>([]);
   const [isLoadingShops, setIsLoadingShops] = useState(true);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  // Waktu sekarang (WIB), diperbarui tiap menit untuk status Buka/Tutup
+  const [now, setNow] = useState(getJakartaNow());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(getJakartaNow()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 1. Fetch Session & Profile User dari Supabase
   useEffect(() => {
@@ -78,7 +198,7 @@ export default function NecoMobileDirectory() {
           .from("profiles")
           .select("id, full_name, email, avatar_url")
           .eq("id", session.user.id)
-          .single();
+          .maybeSingle();
 
         if (profile) {
           setUserProfile(profile);
@@ -105,7 +225,7 @@ export default function NecoMobileDirectory() {
           .from("profiles")
           .select("id, full_name, email, avatar_url")
           .eq("id", session.user.id)
-          .single();
+          .maybeSingle();
 
         setUserProfile(
           profile || {
@@ -125,19 +245,22 @@ export default function NecoMobileDirectory() {
     };
   }, []);
 
-  // 2. Fetch Data Toko Real dari Tabel `shops` Supabase
+  // 2. Fetch Data Toko + Jam Operasional dari Supabase
   useEffect(() => {
     const fetchShops = async () => {
       setIsLoadingShops(true);
       const { data, error } = await supabase
         .from("shops")
         .select(
-          "id, name, category, location, rating, is_open, avatar_url, address_detail, created_at"
+          `id, name, category, location, is_open, avatar_url, address_detail, whatsapp_number, created_at,
+           shop_operating_hours ( day_of_week, open_time, close_time, is_closed )`
         )
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
-        setShops(data);
+      if (error) {
+        console.error("Gagal mengambil daftar toko:", error.message);
+      } else if (data) {
+        setShops(data as ShopItem[]);
       }
       setIsLoadingShops(false);
     };
@@ -480,105 +603,138 @@ export default function NecoMobileDirectory() {
         ) : (
           /* Grid Card Responsive */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-            {filteredShops.map((shop) => (
-              <div
-                key={shop.id}
-                className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between w-full group"
-              >
-                <div>
-                  {/* Cover Banner */}
-                  <div className="relative h-28 sm:h-36 w-full bg-slate-200 overflow-hidden">
-                    <img
-                      src={
-                        shop.avatar_url ||
-                        "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=500&auto=format&fit=crop&q=80"
-                      }
-                      alt={shop.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+            {filteredShops.map((shop) => {
+              const status = getShopStatus(shop, now);
+              const whatsappUrl = buildWhatsAppUrl(
+                shop.whatsapp_number,
+                shop.name
+              );
 
-                    <button
-                      onClick={() => toggleFavorite(shop.id)}
-                      className="absolute top-2.5 right-2.5 p-2 bg-white rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-all shadow-xs"
-                    >
-                      <Heart
-                        className={`w-4 h-4 ${
-                          favorites[shop.id]
-                            ? "fill-rose-500 text-rose-500"
-                            : "text-slate-600"
-                        }`}
-                      />
-                    </button>
-
-                    <div className="absolute bottom-2.5 left-3 flex items-center gap-1 text-[10px] sm:text-xs font-semibold bg-white px-2.5 py-1 rounded-md shadow-xs">
-                      <Clock className="w-3 h-3 text-slate-500" />
-                      <span
-                        className={
-                          shop.is_open ? "text-emerald-600" : "text-rose-500"
+              return (
+                <div
+                  key={shop.id}
+                  className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between w-full group"
+                >
+                  <div>
+                    {/* Cover Banner */}
+                    <div className="relative h-28 sm:h-36 w-full bg-slate-200 overflow-hidden">
+                      <img
+                        src={
+                          shop.avatar_url ||
+                          "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=500&auto=format&fit=crop&q=80"
                         }
+                        alt={shop.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+
+                      <button
+                        onClick={() => toggleFavorite(shop.id)}
+                        className="absolute top-2.5 right-2.5 p-2 bg-white rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-all shadow-xs"
+                        aria-label="Tandai favorit"
                       >
-                        {shop.is_open ? "Buka Sekarang" : "Tutup"}
-                      </span>
-                    </div>
-                  </div>
+                        <Heart
+                          className={`w-4 h-4 ${
+                            favorites[shop.id]
+                              ? "fill-rose-500 text-rose-500"
+                              : "text-slate-600"
+                          }`}
+                        />
+                      </button>
 
-                  {/* Card Detail */}
-                  <div className="p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-2.5">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-emerald-50 text-emerald-700 font-bold border border-slate-200 shrink-0 flex items-center justify-center overflow-hidden">
-                          {shop.avatar_url ? (
-                            <img
-                              src={shop.avatar_url}
-                              alt={shop.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            shop.name.substring(0, 2).toUpperCase()
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h2 className="font-bold text-slate-900 text-sm leading-snug truncate group-hover:text-emerald-600 transition-colors">
-                            {shop.name}
-                          </h2>
-                          <p className="text-[11px] sm:text-xs text-slate-500 truncate">
-                            {shop.category} • {shop.location}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200/50 shrink-0">
-                        <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                        <span className="text-xs font-bold text-amber-700">
-                          {Number(shop.rating || 0).toFixed(1)}
+                      <div className="absolute bottom-2.5 left-3 flex items-center gap-1 text-[10px] sm:text-xs font-semibold bg-white px-2.5 py-1 rounded-md shadow-xs">
+                        <Clock className="w-3 h-3 text-slate-500" />
+                        <span
+                          className={
+                            status.isOpenNow
+                              ? "text-emerald-600"
+                              : "text-rose-500"
+                          }
+                        >
+                          {status.label}
                         </span>
                       </div>
                     </div>
 
-                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                      {shop.address_detail || "Alamat belum diatur."}
-                    </p>
-                  </div>
-                </div>
+                    {/* Card Detail */}
+                    <div className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2.5">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-emerald-50 text-emerald-700 font-bold border border-slate-200 shrink-0 flex items-center justify-center overflow-hidden">
+                            {shop.avatar_url ? (
+                              <img
+                                src={shop.avatar_url}
+                                alt={shop.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              shop.name.substring(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h2 className="font-bold text-slate-900 text-sm leading-snug truncate group-hover:text-emerald-600 transition-colors">
+                              {shop.name}
+                            </h2>
+                            <p className="text-[11px] sm:text-xs text-slate-500 truncate">
+                              {shop.category} • {shop.location}
+                            </p>
+                          </div>
+                        </div>
 
-                {/* Bottom Action */}
-                <div className="p-4 pt-0">
-                  <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                    <Link
-                      href={`/pos/${shop.id}`}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1 transition-colors min-w-0"
-                    >
-                      <span className="truncate">Lihat Toko</span>
-                      <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                    </Link>
-                    <button className="p-2.5 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 active:bg-slate-100 transition-colors shrink-0">
-                      <MessageCircle className="w-4 h-4" />
-                    </button>
+                        {/* Jam operasional hari ini */}
+                        {status.todayHours && (
+                          <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 shrink-0">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            <span className="text-[11px] font-semibold text-slate-600">
+                              {status.todayHours}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                        {shop.address_detail || "Alamat belum diatur."}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Bottom Action */}
+                  <div className="p-4 pt-0">
+                    <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+                      <Link
+                        href={`/shop/${shop.id}`}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1 transition-colors min-w-0"
+                      >
+                        <span className="truncate">Lihat Toko</span>
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                      </Link>
+
+                      {whatsappUrl ? (
+                        <a
+                          href={whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Chat WhatsApp ${shop.name}`}
+                          className="p-2.5 border border-emerald-200 text-emerald-600 rounded-xl hover:bg-emerald-50 active:bg-emerald-100 transition-colors shrink-0"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          title="Nomor WhatsApp belum tersedia"
+                          aria-label="Nomor WhatsApp belum tersedia"
+                          className="p-2.5 border border-slate-200 text-slate-400 rounded-xl opacity-50 cursor-not-allowed shrink-0"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

@@ -6,21 +6,50 @@ import { createClient } from "@/lib/supabase/client";
 import {
   Store,
   Clock,
-  CreditCard,
-  ShieldCheck,
   Save,
   MapPin,
   Phone,
-  Mail,
   Upload,
   CheckCircle2,
-  Star,
   Power,
   Trash2,
   AlertTriangle,
   X,
   Loader2,
 } from "lucide-react";
+
+// day_of_week: 0 = Minggu, 1 = Senin, ... 6 = Sabtu (sama dengan Date.getDay())
+const DAYS = [
+  { label: "Senin", dow: 1 },
+  { label: "Selasa", dow: 2 },
+  { label: "Rabu", dow: 3 },
+  { label: "Kamis", dow: 4 },
+  { label: "Jumat", dow: 5 },
+  { label: "Sabtu", dow: 6 },
+  { label: "Minggu", dow: 0 },
+];
+
+const DEFAULT_OPEN = "08:00";
+const DEFAULT_CLOSE = "22:00";
+
+interface HourRow {
+  day_of_week: number;
+  is_closed: boolean;
+  open_time: string; // format "HH:mm"
+  close_time: string; // format "HH:mm"
+}
+
+const buildDefaultHours = (): HourRow[] =>
+  DAYS.map((d) => ({
+    day_of_week: d.dow,
+    is_closed: false,
+    open_time: DEFAULT_OPEN,
+    close_time: DEFAULT_CLOSE,
+  }));
+
+// Postgres mengembalikan "08:00:00", input type="time" butuh "08:00"
+const toHHmm = (value: string | null | undefined, fallback: string) =>
+  value ? value.slice(0, 5) : fallback;
 
 export default function SettingsPage({
   params,
@@ -34,9 +63,9 @@ export default function SettingsPage({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [activeTab, setActiveTab] = useState<
-    "profile" | "hours" | "payment" | "security" | "danger"
-  >("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "hours" | "danger">(
+    "profile"
+  );
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -49,7 +78,7 @@ export default function SettingsPage({
   const [confirmName, setConfirmName] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Form State
+  // Form State (sesuai kolom tabel `shops`)
   const [shopData, setShopData] = useState({
     id: storeId,
     owner_id: "",
@@ -59,19 +88,26 @@ export default function SettingsPage({
     address_detail: "",
     avatar_url: "",
     is_open: true,
-    rating: 5.0,
-    owner_email: "",
-    owner_phone: "",
+    whatsapp_number: "",
   });
 
-  // 1. Fetch Data Toko & Profil Pemilik dari Supabase
+  // State jam operasional (sesuai tabel `shop_operating_hours`)
+  const [hours, setHours] = useState<HourRow[]>(buildDefaultHours());
+
+  const updateHour = (dow: number, patch: Partial<HourRow>) => {
+    setHours((prev) =>
+      prev.map((h) => (h.day_of_week === dow ? { ...h, ...patch } : h))
+    );
+  };
+
+  // 1. Fetch Data Toko & Jam Operasional dari Supabase
   useEffect(() => {
     async function fetchShopData() {
       try {
         setIsLoading(true);
         setErrorMessage(null);
 
-        // Fetch data toko
+        // Data toko
         const { data: shop, error: shopError } = await supabase
           .from("shops")
           .select("*")
@@ -79,23 +115,6 @@ export default function SettingsPage({
           .single();
 
         if (shopError) throw shopError;
-
-        let ownerEmail = "";
-        let ownerPhone = "";
-
-        // Fetch data profil pemilik jika owner_id ada
-        if (shop?.owner_id) {
-          const { data: profile, error: profileError } = await supabase
-            .from("profiles")
-            .select("email, phone_number")
-            .eq("id", shop.owner_id)
-            .maybeSingle();
-
-          if (!profileError && profile) {
-            ownerEmail = profile.email || "";
-            ownerPhone = profile.phone_number || "";
-          }
-        }
 
         setShopData({
           id: shop.id,
@@ -106,10 +125,29 @@ export default function SettingsPage({
           address_detail: shop.address_detail || "",
           avatar_url: shop.avatar_url || "",
           is_open: shop.is_open ?? true,
-          rating: shop.rating ?? 5.0,
-          owner_email: ownerEmail,
-          owner_phone: ownerPhone,
+          whatsapp_number: shop.whatsapp_number || "",
         });
+
+        // Jam operasional
+        const { data: hoursData, error: hoursError } = await supabase
+          .from("shop_operating_hours")
+          .select("day_of_week, open_time, close_time, is_closed")
+          .eq("shop_id", storeId);
+
+        if (hoursError) throw hoursError;
+
+        // Gabungkan data dari DB dengan default (hari yang belum ada baris tetap tampil)
+        const merged = buildDefaultHours().map((def) => {
+          const found = hoursData?.find((h) => h.day_of_week === def.day_of_week);
+          if (!found) return def;
+          return {
+            day_of_week: def.day_of_week,
+            is_closed: found.is_closed,
+            open_time: toHHmm(found.open_time, DEFAULT_OPEN),
+            close_time: toHHmm(found.close_time, DEFAULT_CLOSE),
+          };
+        });
+        setHours(merged);
       } catch (err: any) {
         console.error("Gagal mengambil data toko:", err);
         setErrorMessage(err.message || "Gagal memuat data toko.");
@@ -160,40 +198,58 @@ export default function SettingsPage({
     }
   };
 
-  // 2. Simpan / Update Data Toko ke Supabase
+  // 2. Simpan / Update Data Toko & Jam Operasional ke Supabase
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validasi jam operasional: jam tutup harus lebih besar dari jam buka
+    const invalidDay = hours.find(
+      (h) => !h.is_closed && (!h.open_time || !h.close_time || h.close_time <= h.open_time)
+    );
+    if (invalidDay) {
+      const label = DAYS.find((d) => d.dow === invalidDay.day_of_week)?.label;
+      setErrorMessage(
+        `Jam operasional hari ${label} tidak valid: jam tutup harus lebih besar dari jam buka.`
+      );
+      setActiveTab("hours");
+      return;
+    }
+
     try {
       setIsSaving(true);
       setErrorMessage(null);
 
-      // Update data pada tabel `shops`
+      // Update tabel `shops`
       const { error: shopUpdateError } = await supabase
         .from("shops")
         .update({
           name: shopData.name,
           category: shopData.category,
           location: shopData.location,
-          address_detail: shopData.address_detail,
+          address_detail: shopData.address_detail.trim() || null,
           is_open: shopData.is_open,
-          avatar_url: shopData.avatar_url,
+          avatar_url: shopData.avatar_url || null,
+          whatsapp_number: shopData.whatsapp_number.trim() || null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", storeId);
 
       if (shopUpdateError) throw shopUpdateError;
 
-      // Update profil pemilik jika `owner_id` ada
-      if (shopData.owner_id) {
-        const { error: profileUpdateError } = await supabase
-          .from("profiles")
-          .update({
-            email: shopData.owner_email,
-            phone_number: shopData.owner_phone,
-          })
-          .eq("id", shopData.owner_id);
+      // Upsert tabel `shop_operating_hours` (unik per shop_id + day_of_week)
+      const hoursPayload = hours.map((h) => ({
+        shop_id: storeId,
+        day_of_week: h.day_of_week,
+        is_closed: h.is_closed,
+        open_time: h.is_closed ? null : h.open_time,
+        close_time: h.is_closed ? null : h.close_time,
+      }));
 
-        if (profileUpdateError) throw profileUpdateError;
-      }
+      const { error: hoursError } = await supabase
+        .from("shop_operating_hours")
+        .upsert(hoursPayload, { onConflict: "shop_id,day_of_week" });
+
+      if (hoursError) throw hoursError;
 
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 3000);
@@ -214,6 +270,7 @@ export default function SettingsPage({
       setIsDeleting(true);
       setErrorMessage(null);
 
+      // Jam operasional ikut terhapus otomatis (ON DELETE CASCADE)
       const { error } = await supabase
         .from("shops")
         .delete()
@@ -222,7 +279,7 @@ export default function SettingsPage({
       if (error) throw error;
 
       setIsDeleteModalOpen(false);
-      router.push("/dashboard");
+      router.push("/mystore");
       router.refresh();
     } catch (err: any) {
       console.error("Gagal menghapus toko:", err);
@@ -235,8 +292,6 @@ export default function SettingsPage({
   const tabs = [
     { id: "profile", label: "Profil Toko", icon: Store },
     { id: "hours", label: "Jam Operasional", icon: Clock },
-    { id: "payment", label: "Pembayaran & QRIS", icon: CreditCard },
-    { id: "security", label: "Keamanan", icon: ShieldCheck },
     { id: "danger", label: "Hapus Toko", icon: Trash2 },
   ];
 
@@ -244,7 +299,7 @@ export default function SettingsPage({
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px] gap-2 text-slate-500">
         <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-        <span className="text-xs">Memuat data toko dari Supabase...</span>
+        <span className="text-xs">Memuat data toko...</span>
       </div>
     );
   }
@@ -318,21 +373,13 @@ export default function SettingsPage({
         {/* Tab 1: Profil Toko */}
         {activeTab === "profile" && (
           <div className="space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="font-bold text-slate-900 text-sm">
-                  Informasi Utama Toko
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  Pengaturan identitas yang tersimpan pada tabel `shops`
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
-                <span className="text-xs font-bold text-amber-700">
-                  {Number(shopData.rating || 0).toFixed(1)}
-                </span>
-              </div>
+            <div className="border-b border-slate-100 pb-3">
+              <h2 className="font-bold text-slate-900 text-sm">
+                Informasi Utama Toko
+              </h2>
+              <p className="text-[11px] text-slate-400">
+                Pengaturan identitas dan kontak toko
+              </p>
             </div>
 
             {/* Status Toko (Toggle Switch) */}
@@ -345,7 +392,7 @@ export default function SettingsPage({
                 />
                 <div>
                   <p className="text-xs font-bold text-slate-800">
-                    Status Toko (`is_open`)
+                    Status Toko
                   </p>
                   <p className="text-[10px] text-slate-400">
                     {shopData.is_open
@@ -409,7 +456,7 @@ export default function SettingsPage({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">
-                  Nama Toko (`name`)
+                  Nama Toko
                 </label>
                 <input
                   type="text"
@@ -424,7 +471,7 @@ export default function SettingsPage({
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">
-                  Kategori (`category`)
+                  Kategori
                 </label>
                 <input
                   type="text"
@@ -439,7 +486,7 @@ export default function SettingsPage({
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">
-                  Kota / Area (`location`)
+                  Kota / Area
                 </label>
                 <div className="relative">
                   <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -457,42 +504,33 @@ export default function SettingsPage({
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">
-                  Telepon Pemilik (`profiles.phone_number`)
+                  Nomor WhatsApp
                 </label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
-                    type="text"
-                    value={shopData.owner_phone}
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="Contoh: 6281234567890"
+                    value={shopData.whatsapp_number}
                     onChange={(e) =>
-                      setShopData({ ...shopData, owner_phone: e.target.value })
+                      setShopData({
+                        ...shopData,
+                        whatsapp_number: e.target.value.replace(/[^\d+]/g, ""),
+                      })
                     }
                     className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
                   />
                 </div>
+                <p className="text-[10px] text-slate-400">
+                  Gunakan format kode negara tanpa spasi, misalnya 62812xxxxxxx
+                </p>
               </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-700">
-                Email Kontak Toko (`profiles.email`)
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="email"
-                  value={shopData.owner_email}
-                  onChange={(e) =>
-                    setShopData({ ...shopData, owner_email: e.target.value })
-                  }
-                  className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700">
-                Alamat Detail (`address_detail`)
+                Alamat Detail
               </label>
               <textarea
                 rows={2}
@@ -517,134 +555,72 @@ export default function SettingsPage({
                 Jam Operasional Toko
               </h2>
               <p className="text-[11px] text-slate-400">
-                Atur jadwal Buka/Tutup harian kasir
+                Centang hari toko buka, lalu atur jam buka dan tutupnya
               </p>
             </div>
 
             <div className="space-y-2.5">
-              {[
-                "Senin",
-                "Selasa",
-                "Rabu",
-                "Kamis",
-                "Jumat",
-                "Sabtu",
-                "Minggu",
-              ].map((day) => (
-                <div
-                  key={day}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl gap-2 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      defaultChecked
-                      className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                    />
-                    <span className="font-semibold text-slate-700">{day}</span>
+              {DAYS.map((day) => {
+                const row = hours.find((h) => h.day_of_week === day.dow)!;
+                const isOpenDay = !row.is_closed;
+
+                return (
+                  <div
+                    key={day.dow}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl gap-2 text-xs"
+                  >
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isOpenDay}
+                        onChange={(e) =>
+                          updateHour(day.dow, { is_closed: !e.target.checked })
+                        }
+                        className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                      />
+                      <span className="font-semibold text-slate-700">
+                        {day.label}
+                      </span>
+                      {!isOpenDay && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-500">
+                          Libur
+                        </span>
+                      )}
+                    </label>
+
+                    <div
+                      className={`flex items-center gap-2 pl-7 sm:pl-0 ${
+                        !isOpenDay ? "opacity-40" : ""
+                      }`}
+                    >
+                      <input
+                        type="time"
+                        value={row.open_time}
+                        disabled={!isOpenDay}
+                        onChange={(e) =>
+                          updateHour(day.dow, { open_time: e.target.value })
+                        }
+                        className="px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs disabled:cursor-not-allowed"
+                      />
+                      <span className="text-slate-400">-</span>
+                      <input
+                        type="time"
+                        value={row.close_time}
+                        disabled={!isOpenDay}
+                        onChange={(e) =>
+                          updateHour(day.dow, { close_time: e.target.value })
+                        }
+                        className="px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs disabled:cursor-not-allowed"
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 pl-7 sm:pl-0">
-                    <input
-                      type="time"
-                      defaultValue="08:00"
-                      className="px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs"
-                    />
-                    <span className="text-slate-400">-</span>
-                    <input
-                      type="time"
-                      defaultValue="22:00"
-                      className="px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs"
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* Tab 3: Pembayaran & QRIS */}
-        {activeTab === "payment" && (
-          <div className="space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="font-bold text-slate-900 text-sm">
-                Metode Pembayaran Kasir
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                Pilihan pembayaran yang tersedia saat checkout order
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <label className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl cursor-pointer">
-                <div className="flex items-center gap-3">
-                  <CreditCard className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">
-                      Tunai (Cash)
-                    </p>
-                    <p className="text-[10px] text-slate-400">
-                      Menerima pembayaran tunai di meja kasir
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
-                />
-              </label>
-
-              <label className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl cursor-pointer">
-                <div className="flex items-center gap-3">
-                  <CreditCard className="w-5 h-5 text-purple-600 shrink-0" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">
-                      QRIS (Statis / Dinamis)
-                    </p>
-                    <p className="text-[10px] text-slate-400">
-                      Menerima e-Wallet & Mobile Banking
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
-                />
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 4: Keamanan */}
-        {activeTab === "security" && (
-          <div className="space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="font-bold text-slate-900 text-sm">
-                PIN & Otorisasi Toko
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                Gunakan PIN ini untuk verifikasi void atau diskon khusus di kasir
-              </p>
-            </div>
-
-            <div className="space-y-3 max-w-xs">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700">
-                  PIN Toko (6 Digit)
-                </label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  defaultValue="123456"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs tracking-widest text-center font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 5: Danger Zone (Hapus Toko) */}
+        {/* Tab 3: Danger Zone (Hapus Toko) */}
         {activeTab === "danger" && (
           <div className="space-y-4">
             <div className="border-b border-rose-100 pb-3">
@@ -664,7 +640,7 @@ export default function SettingsPage({
                     Hapus Toko Ini Permanen
                   </h3>
                   <p className="text-[11px] text-rose-700/80 leading-relaxed">
-                    Setelah toko dihapus dari Supabase, semua produk, riwayat transaksi, dan data kasir terkait akan **dihapus secara permanen** dan tidak dapat dikembalikan lagi.
+                    Setelah toko dihapus, semua produk, jam operasional, riwayat transaksi, dan data kasir terkait akan <strong>dihapus secara permanen</strong> dan tidak dapat dikembalikan lagi.
                   </p>
                 </div>
               </div>

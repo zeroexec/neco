@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, use } from "react";
+import React, { useState, useEffect, use } from "react";
 import { supabase } from "@/lib/supabase";
 import ProductFormModal, { Product } from "./components/ProductFormModal";
 import {
@@ -13,6 +13,7 @@ import {
   Package,
   MoreVertical,
   AlertCircle,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 
 export default function ProductsPage({
@@ -33,15 +34,12 @@ export default function ProductsPage({
 
   // State menu dropdown aktif
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Perbaikan Event Listener Click Outside yang Aman untuk Multiple Cards
+  // Tutup menu jika klik di luar area menu titik tiga manapun
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
+      const target = event.target as HTMLElement;
+      if (!target.closest("[data-product-menu]")) {
         setActiveMenuId(null);
       }
     };
@@ -84,11 +82,21 @@ export default function ProductsPage({
     setIsModalOpen(true);
   };
 
-  const toggleAvailability = async (id: string, currentStatus: boolean) => {
+  const toggleAvailability = async (product: Product) => {
+    const nextStatus = !product.is_available;
+    const tracksStock = product.track_stock ?? true;
+
+    // Produk dengan stok habis tidak boleh diaktifkan
+    if (nextStatus && tracksStock && product.stock <= 0) {
+      alert("Stok produk habis. Tambahkan stok terlebih dahulu lewat menu Edit.");
+      return;
+    }
+
     try {
-      const nextStatus = !currentStatus;
       setProducts((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, is_available: nextStatus } : p))
+        prev.map((p) =>
+          p.id === product.id ? { ...p, is_available: nextStatus } : p
+        )
       );
 
       const { error } = await supabase
@@ -97,7 +105,7 @@ export default function ProductsPage({
           is_available: nextStatus,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", id);
+        .eq("id", product.id);
 
       if (error) throw error;
     } catch (err) {
@@ -141,10 +149,7 @@ export default function ProductsPage({
   ];
 
   return (
-    <div
-      ref={containerRef}
-      className="max-w-6xl mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6"
-    >
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
       {/* Header Page */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
@@ -157,7 +162,7 @@ export default function ProductsPage({
         </div>
         <button
           onClick={handleOpenAdd}
-          className="inline-flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-medium text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-sm transition-all cursor-pointer w-full sm:w-auto"
+          className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-sm transition-all cursor-pointer w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" />
           <span>Tambah Produk</span>
@@ -185,8 +190,8 @@ export default function ProductsPage({
               onClick={() => setSelectedCategory(cat)}
               className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
                 selectedCategory === cat
-                  ? "bg-zinc-900 text-white shadow-sm"
-                  : "bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700"
               }`}
             >
               {cat}
@@ -210,9 +215,12 @@ export default function ProductsPage({
         /* Card Grid Layout */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
           {filteredProducts.map((product) => {
+            const tracksStock = product.track_stock ?? true;
+            const isOutOfStock = tracksStock && product.stock <= 0;
             const isLowStock =
-              product.stock <= (product.min_stock ?? 0) && product.stock > 0;
-            const isOutOfStock = product.stock <= 0;
+              tracksStock &&
+              product.stock > 0 &&
+              product.stock <= (product.min_stock ?? 0);
 
             return (
               <div
@@ -262,7 +270,7 @@ export default function ProductsPage({
                   </div>
 
                   {/* Menu Titik Tiga (Pojok Kanan Atas) */}
-                  <div className="absolute top-3.5 right-3">
+                  <div className="absolute top-3.5 right-3" data-product-menu>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -278,7 +286,37 @@ export default function ProductsPage({
 
                     {/* Popover Dropdown Menu */}
                     {activeMenuId === product.id && (
-                      <div className="absolute right-0 top-7 w-32 bg-white rounded-xl border border-zinc-200 shadow-xl py-1 z-20 text-xs text-zinc-700">
+                      <div className="absolute right-0 top-7 w-52 bg-white rounded-xl border border-zinc-200 shadow-xl py-1 z-20 text-xs text-zinc-700">
+                        {/* Saklar Tampilkan di Toko (is_available) */}
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={product.is_available}
+                          onClick={() => toggleAvailability(product)}
+                          className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-zinc-50 transition-colors text-left cursor-pointer select-none"
+                        >
+                          <span className="font-medium text-zinc-700">
+                            Tampilkan di toko
+                          </span>
+                          <span
+                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                              product.is_available
+                                ? "bg-emerald-600"
+                                : "bg-zinc-300"
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                                product.is_available
+                                  ? "translate-x-4"
+                                  : "translate-x-0"
+                              }`}
+                            />
+                          </span>
+                        </button>
+
+                        <div className="my-1 border-t border-zinc-100" />
+
                         <button
                           onClick={() => handleOpenEdit(product)}
                           className="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 transition-colors text-left font-medium text-zinc-700 cursor-pointer"
@@ -302,13 +340,18 @@ export default function ProductsPage({
                 <div className="pt-2.5 border-t border-zinc-100 flex items-center justify-between text-xs">
                   {/* Info Stok */}
                   <div className="flex items-center gap-1 text-[11px]">
-                    {isOutOfStock ? (
+                    {!tracksStock ? (
+                      <span className="text-emerald-700 font-medium flex items-center gap-1">
+                        <InfinityIcon className="w-3 h-3" /> Selalu tersedia
+                      </span>
+                    ) : isOutOfStock ? (
                       <span className="text-rose-600 font-medium flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" /> Habis
                       </span>
                     ) : isLowStock ? (
                       <span className="text-amber-600 font-medium flex items-center gap-1">
-                        Stok: {product.stock} {product.unit || "pcs"}
+                        <AlertCircle className="w-3 h-3" />
+                        Menipis: {product.stock} {product.unit || "pcs"}
                       </span>
                     ) : (
                       <span className="text-zinc-500">
@@ -324,9 +367,7 @@ export default function ProductsPage({
                   {/* Button Toggle Status */}
                   <button
                     type="button"
-                    onClick={() =>
-                      toggleAvailability(product.id, product.is_available)
-                    }
+                    onClick={() => toggleAvailability(product)}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-all cursor-pointer ${
                       product.is_available
                         ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"

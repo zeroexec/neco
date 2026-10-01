@@ -1,10 +1,25 @@
 "use client";
 
-import React, { useState, useEffect, use } from "react";
-import { ShoppingBag as CartIcon, Search, Barcode, Loader2 } from "lucide-react";
+import React, { useState, useEffect, useMemo, use } from "react";
+import {
+  ShoppingBag as CartIcon,
+  Search,
+  Barcode,
+  Loader2,
+  Infinity as InfinityIcon,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  PackagePlus,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-import CartPanel, { CheckoutPayment } from "./components/CartPanel";
+import CartPanel, {
+  CheckoutPayment,
+  CartItem as PanelCartItem,
+  Modal,
+} from "./components/CartPanel";
+import { useDebouncedValue } from "./components/useDebouncedValue";
 
 // ===== Types =====
 interface Product {
@@ -15,6 +30,9 @@ interface Product {
   category?: string | null;
   price: number;
   stock?: number | null;
+  min_stock?: number | null;
+  unit?: string | null;
+  track_stock?: boolean;
   image_url?: string | null;
   is_available: boolean;
 }
@@ -22,6 +40,31 @@ interface Product {
 interface CartItem extends Product {
   quantity: number;
 }
+
+interface StockPrompt {
+  productId: string;
+  target: number; // jumlah yang dibutuhkan di keranjang
+  needed: number; // minimal tambah stok agar target tercukupi
+  increment: boolean; // true = naikkan jumlah keranjang 1 setelah stok ditambah
+}
+
+interface Notice {
+  type: "success" | "error" | "warning";
+  title: string;
+  message?: string;
+  change?: number;
+}
+
+const formatRp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
+
+// Produk punya batas stok hanya jika stoknya dihitung dan nilainya ada
+const hasStockLimit = (product: Product): boolean =>
+  (product.track_stock ?? true) &&
+  product.stock !== undefined &&
+  product.stock !== null;
+
+const isSoldOutProduct = (product: Product): boolean =>
+  hasStockLimit(product) && (product.stock as number) <= 0;
 
 export default function POSPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -36,16 +79,24 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
   // States Filter & Keranjang
   const [selectedCategory, setSelectedCategory] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(searchQuery.trim().toLowerCase(), 300);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // UI States
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
+  // Modal custom
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [stockPrompt, setStockPrompt] = useState<StockPrompt | null>(null);
+  const [addQty, setAddQty] = useState("");
+  const [isAddingStock, setIsAddingStock] = useState(false);
+  const [stockError, setStockError] = useState("");
+
   // ===== Fetch Produk =====
-  const loadProducts = async () => {
+  const loadProducts = async (silent = false) => {
     try {
-      setIsLoadingProducts(true);
+      if (!silent) setIsLoadingProducts(true);
       setErrorMessage(null);
 
       const { data, error } = await supabase
@@ -82,25 +133,38 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
     if (storeId) {
       loadProducts();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeId]);
 
-  // ===== Cart Handlers =====
-  const handleAddToCart = (product: Product) => {
-    if (!product.is_available) return;
-
-    const existing = cart.find((item) => item.id === product.id);
-    const currentQty = existing ? existing.quantity : 0;
-
-    if (
-      product.stock !== undefined &&
-      product.stock !== null &&
-      currentQty + 1 > product.stock
-    ) {
-      alert(`Stok ${product.name} tidak mencukupi (Sisa: ${product.stock})`);
-      return;
+  // ===== Tambah stok =====
+  const addStock = async (id: string, amount: number) => {
+    const product = products.find((p) => p.id === id);
+    if (!product || !hasStockLimit(product)) {
+      throw new Error("Produk tidak ditemukan atau stoknya tidak dihitung.");
     }
 
+    const newStock = (product.stock as number) + amount;
+
+    const { error } = await supabase
+      .from("products")
+      .update({
+        stock: newStock,
+        is_available: true, // stok terisi lagi -> aktif kembali
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (error) throw error;
+
+    setProducts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, stock: newStock, is_available: true } : p))
+    );
+  };
+
+  // ===== Cart Handlers =====
+  const pushToCart = (product: Product) => {
     setCart((prev) => {
+      const existing = prev.find((item) => item.id === product.id);
       if (existing) {
         return prev.map((item) =>
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
@@ -110,34 +174,100 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
     });
   };
 
-  const handleUpdateQuantity = (id: string, delta: number) => {
-    const product = products.find((p) => p.id === id);
+  // Satu pintu untuk modal stok kurang (dari kartu produk maupun dari CartPanel)
+  const openStockPrompt = (product: Product, target: number, increment: boolean) => {
+    const needed = Math.max(1, target - ((product.stock as number) ?? 0));
+    setStockPrompt({ productId: product.id, target, needed, increment });
+    setAddQty(String(needed));
+    setStockError("");
+  };
 
+  const closeStockPrompt = () => {
+    if (isAddingStock) return;
+    setStockPrompt(null);
+    setStockError("");
+  };
+
+  // Klik kartu produk
+  const handleAddToCart = (product: Product) => {
+    // Nonaktif manual (stok masih ada) tetap diblokir; yang habis boleh klik untuk tambah stok
+    if (!product.is_available && !isSoldOutProduct(product)) return;
+
+    const existing = cart.find((item) => item.id === product.id);
+    const currentQty = existing ? existing.quantity : 0;
+
+    if (hasStockLimit(product) && currentQty + 1 > (product.stock as number)) {
+      openStockPrompt(product, currentQty + 1, true);
+      return;
+    }
+
+    pushToCart(product);
+  };
+
+  // Dipanggil CartPanel saat tombol + atau Bayar menemukan stok kurang
+  const handleStockShortage = (id: string, increment: boolean) => {
+    const product = products.find((p) => p.id === id);
+    const item = cart.find((i) => i.id === id);
+    if (!product || !item) return;
+    openStockPrompt(product, item.quantity + (increment ? 1 : 0), increment);
+  };
+
+  // Stok untuk tombol + dan Bayar dicek di CartPanel; di sini hanya ubah jumlah
+  const handleUpdateQuantity = (id: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((item) => {
-          if (item.id === id) {
-            const newQty = item.quantity + delta;
-
-            if (
-              delta > 0 &&
-              product?.stock !== undefined &&
-              product?.stock !== null &&
-              newQty > product.stock
-            ) {
-              alert(`Stok maksimum tercapai (${product.stock})`);
-              return item;
-            }
-
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
-          }
-          return item;
+          if (item.id !== id) return item;
+          const newQty = item.quantity + delta;
+          return newQty > 0 ? { ...item, quantity: newQty } : null;
         })
         .filter(Boolean) as CartItem[]
     );
   };
 
   const handleClearCart = () => setCart([]);
+
+  const handleSubmitStockPrompt = async () => {
+    if (!stockPrompt) return;
+    const amount = parseInt(addQty, 10) || 0;
+
+    if (amount <= 0) {
+      setStockError("Jumlah tambah stok harus lebih dari 0.");
+      return;
+    }
+    if (amount < stockPrompt.needed) {
+      setStockError(`Minimal tambah ${stockPrompt.needed} agar jumlah tercukupi.`);
+      return;
+    }
+
+    const product = products.find((p) => p.id === stockPrompt.productId);
+    if (!product) return;
+
+    setIsAddingStock(true);
+    setStockError("");
+    try {
+      await addStock(product.id, amount);
+      if (stockPrompt.increment) pushToCart(product); // masuk / naik 1 di keranjang
+      setStockPrompt(null);
+    } catch (err: any) {
+      console.error("Gagal menambah stok:", err);
+      setStockError("Gagal menambah stok. Silakan coba lagi.");
+    } finally {
+      setIsAddingStock(false);
+    }
+  };
+
+  // Data keranjang untuk CartPanel: stok selalu diambil dari data produk terbaru
+  const panelCart: PanelCartItem[] = cart.map((item) => {
+    const fresh = products.find((p) => p.id === item.id) ?? item;
+    return {
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      stock: hasStockLimit(fresh) ? (fresh.stock as number) : null, // null = tanpa batas
+    };
+  });
 
   // Total untuk floating bar mobile
   const grandTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -146,26 +276,36 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
   // ===== Checkout =====
   const handleCheckout = async (payment: CheckoutPayment) => {
     if (cart.length === 0) return;
-    if (payment.cashGiven < grandTotal) return;
+
+    const isCash = payment.paymentMethod === "cash";
+    // Validasi uang diterima hanya untuk pembayaran tunai
+    if (isCash && (payment.cashGiven ?? 0) < grandTotal) return;
+
+    const change = isCash ? payment.changeAmount ?? 0 : 0;
 
     setIsSubmitting(true);
 
     try {
-      // Step A: Insert Order
+      // Step A: Insert Order (order_number diisi otomatis oleh trigger)
       const { data: orderData, error: orderError } = await supabase
         .from("orders")
         .insert({
           shop_id: storeId,
+          source: "pos",
+          service_type: "walk_in",
+          status: "completed",
           customer_name: "Pelanggan Umum",
           subtotal: grandTotal,
-          discount_amount: 0,
           tax: 0,
+          discount: 0,
           total_amount: grandTotal,
-          payment_method: "cash",
-          cash_given: payment.cashGiven,
-          change_amount: payment.changeAmount,
-          order_type: "dine-in",
-          status: "completed",
+          payment_method: payment.paymentMethod,
+          payment_status: "paid",
+          cash_given: isCash ? payment.cashGiven : null,
+          change_amount: isCash ? payment.changeAmount : null,
+          paid_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          notes: payment.notes,
         })
         .select()
         .single();
@@ -187,49 +327,88 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
           .from("order_items")
           .insert(orderItems);
 
-        if (itemsError) throw itemsError;
+        if (itemsError) {
+          // Rollback manual: hapus order agar tidak ada order tanpa item
+          await supabase.from("orders").delete().eq("id", orderData.id);
+          throw itemsError;
+        }
 
-        // Step C: Update Stok
+        // Step C: Update Stok (hanya produk yang stoknya dihitung)
+        const failedStockUpdates: string[] = [];
+
         for (const item of cart) {
-          if (item.stock !== undefined && item.stock !== null) {
-            const newStock = Math.max(0, item.stock - item.quantity);
-            await supabase
-              .from("products")
-              .update({ stock: newStock })
-              .eq("id", item.id);
+          // Pakai data produk terbaru dari state, bukan salinan di keranjang
+          const current = products.find((p) => p.id === item.id) ?? item;
+          if (!hasStockLimit(current)) continue;
+
+          const newStock = Math.max(0, (current.stock as number) - item.quantity);
+
+          const { error: stockError } = await supabase
+            .from("products")
+            .update({
+              stock: newStock,
+              // Stok habis -> otomatis nonaktif
+              is_available: newStock > 0,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", item.id);
+
+          if (stockError) {
+            console.error("Gagal update stok:", item.name, stockError);
+            failedStockUpdates.push(item.name);
           }
         }
 
-        const kembalian =
-          payment.changeAmount > 0
-            ? `\nKembalian: Rp ${payment.changeAmount.toLocaleString("id-ID")}`
-            : "";
-        alert(`Transaksi berhasil disimpan!${kembalian}`);
-
         setCart([]);
-        await loadProducts();
         setIsMobileCartOpen(false);
+
+        if (failedStockUpdates.length > 0) {
+          setNotice({
+            type: "warning",
+            title: "Transaksi tersimpan, stok belum sinkron",
+            message: `Stok gagal diperbarui untuk: ${failedStockUpdates.join(
+              ", "
+            )}. Periksa stok secara manual.`,
+            change: change > 0 ? change : undefined,
+          });
+        } else {
+          setNotice({
+            type: "success",
+            title: "Transaksi berhasil disimpan",
+            change: change > 0 ? change : undefined,
+          });
+        }
+
+        await loadProducts(true);
       }
     } catch (err: any) {
       console.error("Gagal simpan transaksi:", err);
-      alert(err.message || "Gagal menyimpan transaksi.");
+      setNotice({
+        type: "error",
+        title: "Transaksi gagal",
+        message: err.message || "Gagal menyimpan transaksi.",
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   // ===== Katalog: filter & render =====
-  const filteredProducts = products.filter((product) => {
-    const matchesCategory =
-      selectedCategory === "Semua" || product.category === selectedCategory;
+  const filteredProducts = useMemo(
+    () =>
+      products.filter((product) => {
+        const matchesCategory =
+          selectedCategory === "Semua" || product.category === selectedCategory;
 
-    const query = searchQuery.toLowerCase();
-    const matchesSearch =
-      product.name.toLowerCase().includes(query) ||
-      (product.sku && product.sku.toLowerCase().includes(query));
+        const matchesSearch =
+          debouncedQuery === "" ||
+          product.name.toLowerCase().includes(debouncedQuery) ||
+          (product.sku && product.sku.toLowerCase().includes(debouncedQuery));
 
-    return matchesCategory && matchesSearch;
-  });
+        return matchesCategory && matchesSearch;
+      }),
+    [products, selectedCategory, debouncedQuery]
+  );
 
   const renderProductImage = (product: Product) => {
     const imgSource = product.image_url;
@@ -244,6 +423,14 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
     }
     return <span className="text-2xl">📦</span>;
   };
+
+  // Data untuk modal tambah stok
+  const promptProduct = stockPrompt
+    ? products.find((p) => p.id === stockPrompt.productId) ?? null
+    : null;
+  const promptStockAfter = promptProduct
+    ? ((promptProduct.stock as number) ?? 0) + (parseInt(addQty, 10) || 0)
+    : 0;
 
   return (
     <div className="relative flex flex-col lg:flex-row h-[calc(100dvh-3.5rem)] md:h-screen -m-4 sm:-m-6 lg:-m-8 bg-slate-50 font-sans overflow-hidden">
@@ -274,7 +461,7 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
         {errorMessage && (
           <div className="bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-xl text-xs flex items-center justify-between gap-2">
             <span>{errorMessage}</span>
-            <button onClick={loadProducts} className="font-bold hover:underline shrink-0">
+            <button onClick={() => loadProducts()} className="font-bold hover:underline shrink-0">
               Coba lagi
             </button>
           </div>
@@ -313,17 +500,26 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
                 const cartItem = cart.find((item) => item.id === product.id);
                 const qtyInCart = cartItem?.quantity || 0;
 
-                const isOutOfStock =
-                  !product.is_available ||
-                  (product.stock !== undefined && product.stock !== null && product.stock <= 0);
+                const tracksStock = product.track_stock ?? true;
+                const limited = hasStockLimit(product);
+                const isSoldOut = isSoldOutProduct(product);
+                const isInactive = !product.is_available;
+                // Habis tetap bisa diklik (untuk tambah stok); nonaktif manual diblokir
+                const isBlocked = isInactive && !isSoldOut;
+                const isLowStock =
+                  limited &&
+                  !isSoldOut &&
+                  (product.stock as number) <= (product.min_stock ?? 0);
 
                 return (
                   <div
                     key={product.id}
-                    onClick={() => !isOutOfStock && handleAddToCart(product)}
+                    onClick={() => !isBlocked && handleAddToCart(product)}
                     className={`group relative bg-white border p-3 rounded-2xl transition-all flex flex-col justify-between select-none ${
-                      isOutOfStock
+                      isBlocked
                         ? "opacity-50 cursor-not-allowed border-slate-200 bg-slate-50"
+                        : isSoldOut
+                        ? "opacity-70 cursor-pointer border-slate-200 hover:border-amber-400 hover:shadow-md"
                         : "cursor-pointer hover:border-emerald-500 hover:shadow-md"
                     } ${
                       qtyInCart > 0
@@ -363,15 +559,31 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
                         Rp {Number(product.price).toLocaleString("id-ID")}
                       </span>
                       <span
-                        className={`text-[10px] font-semibold ${
-                          isOutOfStock ? "text-rose-500" : "text-slate-500"
+                        className={`text-[10px] font-semibold flex items-center gap-0.5 ${
+                          isSoldOut
+                            ? "text-rose-500"
+                            : isInactive
+                            ? "text-slate-400"
+                            : isLowStock
+                            ? "text-amber-600"
+                            : !tracksStock
+                            ? "text-emerald-600"
+                            : "text-slate-500"
                         }`}
                       >
-                        {isOutOfStock
-                          ? "Habis"
-                          : product.stock !== undefined && product.stock !== null
-                          ? `Stok: ${product.stock}`
-                          : "Tersedia"}
+                        {isSoldOut ? (
+                          "Habis · Tambah stok"
+                        ) : isInactive ? (
+                          "Nonaktif"
+                        ) : !tracksStock ? (
+                          <>
+                            <InfinityIcon className="w-3 h-3" /> Tersedia
+                          </>
+                        ) : limited ? (
+                          `Stok: ${product.stock} ${product.unit || "pcs"}`
+                        ) : (
+                          "Tersedia"
+                        )}
                       </span>
                     </div>
                   </div>
@@ -382,12 +594,13 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
         </div>
       </div>
 
-      {/* ===== Cart (Kanan) - komponen independen ===== */}
+      {/* ===== Cart (Kanan) ===== */}
       <CartPanel
-        cart={cart}
+        cart={panelCart}
         onUpdateQuantity={handleUpdateQuantity}
         onClearCart={handleClearCart}
         onCheckout={handleCheckout}
+        onStockShortage={handleStockShortage}
         isSubmitting={isSubmitting}
         isOpen={isMobileCartOpen}
         onClose={() => setIsMobileCartOpen(false)}
@@ -413,6 +626,124 @@ export default function POSPage({ params }: { params: Promise<{ id: string }> })
           <span className="text-emerald-400">Rp {grandTotal.toLocaleString("id-ID")} →</span>
         </button>
       </div>
+
+      {/* ===== Modal: stok tidak cukup + tambah stok (satu-satunya, dipakai kartu & panel) ===== */}
+      <Modal open={!!stockPrompt && !!promptProduct} onClose={closeStockPrompt}>
+        {stockPrompt && promptProduct && (
+          <>
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900">
+                  {isSoldOutProduct(promptProduct) ? "Stok habis" : "Stok tidak cukup"}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  <span className="font-semibold text-slate-700">{promptProduct.name}</span>{" "}
+                  hanya tersisa {promptProduct.stock ?? 0} {promptProduct.unit || "pcs"},
+                  sedangkan kamu butuh {stockPrompt.target}.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                <PackagePlus className="w-3.5 h-3.5" />
+                Tambah stok
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                value={addQty}
+                onChange={(e) => {
+                  setAddQty(e.target.value.replace(/\D/g, "").slice(0, 6));
+                  setStockError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSubmitStockPrompt();
+                }}
+                disabled={isAddingStock}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-bold text-slate-800"
+              />
+              <p className="text-[11px] text-slate-400">
+                Stok setelah ditambah:{" "}
+                <span className="font-bold text-slate-600">{promptStockAfter}</span>
+              </p>
+              {stockError && (
+                <p className="text-[11px] font-semibold text-rose-600">{stockError}</p>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={closeStockPrompt}
+                disabled={isAddingStock}
+                className="flex-1 py-2 text-xs font-bold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Tutup
+              </button>
+              <button
+                onClick={handleSubmitStockPrompt}
+                disabled={isAddingStock}
+                className="flex-1 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white flex items-center justify-center gap-1.5"
+              >
+                {isAddingStock && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>{stockPrompt.increment ? "Simpan & Masukkan" : "Simpan Stok"}</span>
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* ===== Modal: pemberitahuan hasil transaksi (pengganti alert) ===== */}
+      <Modal open={!!notice} onClose={() => setNotice(null)}>
+        {notice && (
+          <>
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  notice.type === "success"
+                    ? "bg-emerald-50 text-emerald-600"
+                    : notice.type === "warning"
+                    ? "bg-amber-50 text-amber-600"
+                    : "bg-rose-50 text-rose-600"
+                }`}
+              >
+                {notice.type === "success" ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : notice.type === "warning" ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : (
+                  <XCircle className="w-5 h-5" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900">{notice.title}</h3>
+                {notice.message && (
+                  <p className="text-xs text-slate-500 mt-0.5 break-words">{notice.message}</p>
+                )}
+              </div>
+            </div>
+
+            {notice.change !== undefined && (
+              <div className="flex justify-between items-center px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold">
+                <span>Kembalian</span>
+                <span className="text-base">{formatRp(notice.change)}</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setNotice(null)}
+              autoFocus
+              className="w-full py-2 text-xs font-bold rounded-xl bg-slate-900 hover:bg-slate-800 text-white"
+            >
+              OK
+            </button>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
