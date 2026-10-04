@@ -47,6 +47,34 @@ interface ProductFormModalProps {
   onSuccess: () => void;
 }
 
+// ===== Storage gambar: bucket "shops", folder khusus produk =====
+// Struktur: shops/{storeId}/products/...
+// (logo & foto toko memakai folder lain: {storeId}/logo/ dan {storeId}/cover/)
+const BUCKET = "shops";
+const PRODUCT_IMAGE_FOLDER = "products";
+
+// Ambil path file di bucket dari URL publik. Mengembalikan null bila bukan dari bucket "shops".
+const getStoragePath = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  const raw = url.slice(idx + marker.length).split("?")[0];
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
+// Hapus gambar dari storage berdasarkan URL publiknya (gagal tidak menghentikan alur utama)
+const removeImage = async (url: string | null | undefined) => {
+  const path = getStoragePath(url);
+  if (!path) return;
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) console.warn("Gagal menghapus gambar lama:", error.message);
+};
+
 /**
  * Helper function untuk kompresi gambar berbasis Canvas browser
  * Menjaga kualitas visual (80%) dan meresize jika melebihi maxWidth/maxHeight.
@@ -253,21 +281,25 @@ export default function ProductFormModal({
     setImagePreview(null);
   };
 
+  // Unggah ke bucket "shops" di folder {storeId}/products/
   const uploadImage = async (file: File): Promise<string | null> => {
-    const filePath = `${storeId}/${Date.now()}.jpg`;
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const filePath = `${storeId}/${PRODUCT_IMAGE_FOLDER}/${unique}.jpg`;
 
     const { error: uploadError } = await supabase.storage
-      .from("product-images")
-      .upload(filePath, file, { upsert: true, contentType: "image/jpeg" });
+      .from(BUCKET)
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: "image/jpeg",
+      });
 
     if (uploadError) {
       console.error("Error uploading image:", uploadError);
       return null;
     }
 
-    const { data } = supabase.storage
-      .from("product-images")
-      .getPublicUrl(filePath);
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(filePath);
 
     return data.publicUrl;
   };
@@ -324,16 +356,23 @@ export default function ProductFormModal({
       }
     }
 
+    // Untuk rollback: file baru yang sudah terunggah & penanda produk sudah tersimpan
+    let newUploadedUrl: string | null = null;
+    let productSaved = false;
+
     try {
       setIsSubmitting(true);
 
-      let imageUrl = imagePreview;
+      let imageUrl: string | null = imagePreview;
 
       if (imageFile) {
         const uploadedUrl = await uploadImage(imageFile);
-        if (uploadedUrl) {
-          imageUrl = uploadedUrl;
+        if (!uploadedUrl) {
+          // Batalkan penyimpanan agar URL blob sementara tidak ikut masuk database
+          throw new Error("Gagal mengunggah gambar produk.");
         }
+        newUploadedUrl = uploadedUrl;
+        imageUrl = uploadedUrl;
       }
 
       const stockValue = productForm.track_stock
@@ -377,6 +416,14 @@ export default function ProductFormModal({
 
         if (error) throw error;
         productId = data.id;
+      }
+
+      productSaved = true;
+
+      // Produk sudah tersimpan -> hapus gambar lama yang tidak dipakai lagi dari storage
+      const oldImageUrl = editingProduct?.image_url;
+      if (oldImageUrl && oldImageUrl !== imageUrl) {
+        await removeImage(oldImageUrl);
       }
 
       if (productId) {
@@ -441,6 +488,12 @@ export default function ProductFormModal({
       onClose();
     } catch (err) {
       console.error("Error saving product:", err);
+
+      // Produk gagal tersimpan -> buang file baru yang sudah terlanjur diunggah
+      if (newUploadedUrl && !productSaved) {
+        await removeImage(newUploadedUrl);
+      }
+
       alert("Gagal menyimpan data produk.");
     } finally {
       setIsSubmitting(false);

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import ShopMenuModal from "./components/ShopMenuModal";
+import ShopDetailModal from "./components/ShopDetailModal";
 import SidebarDrawer, { UserProfile } from "./components/SidebarDrawer";
 import {
   Search,
@@ -34,7 +35,8 @@ interface ShopItem {
   category: string;
   location: string;
   is_open: boolean;
-  avatar_url: string | null;
+  avatar_url: string | null; // logo toko
+  cover_url: string | null; // sepanduk toko
   address_detail: string | null;
   created_at: string;
   shop_operating_hours: OperatingHour[] | null;
@@ -140,6 +142,8 @@ export default function NecoMobileDirectory() {
 
   // Toko yang sedang dibuka menunya di modal
   const [menuShop, setMenuShop] = useState<ShopItem | null>(null);
+  // Toko yang sedang dilihat detailnya di modal
+  const [detailShop, setDetailShop] = useState<ShopItem | null>(null);
 
   // Waktu sekarang (WIB), diperbarui tiap menit untuk status Buka/Tutup
   const [now, setNow] = useState(getJakartaNow());
@@ -215,7 +219,7 @@ export default function NecoMobileDirectory() {
       const { data, error } = await supabase
         .from("shops")
         .select(
-          `id, name, category, location, is_open, avatar_url, address_detail, created_at,
+          `id, name, category, location, is_open, avatar_url, cover_url, address_detail, created_at,
            shop_operating_hours ( day_of_week, open_time, close_time, is_closed )`
         )
         .order("created_at", { ascending: false });
@@ -254,6 +258,9 @@ export default function NecoMobileDirectory() {
       .includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
+
+  // Status toko yang sedang dibuka di modal detail
+  const detailStatus = detailShop ? getShopStatus(detailShop, now) : null;
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-800 pb-12 font-sans relative">
@@ -439,16 +446,16 @@ export default function NecoMobileDirectory() {
               return (
                 <div
                   key={shop.id}
-                  className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between w-full group"
+                  className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between w-full group"
                 >
                   <div>
-                    {/* Cover Banner */}
+                    {/* Sepanduk toko (cover_url) */}
                     <div className="relative h-28 sm:h-36 w-full bg-slate-200 overflow-hidden">
-                      {shop.avatar_url ? (
+                      {shop.cover_url ? (
                         <img
-                          src={shop.avatar_url}
-                          alt={shop.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          src={shop.cover_url}
+                          alt={`Sepanduk ${shop.name}`}
+                          className="w-full h-full object-cover"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-emerald-50">
@@ -475,6 +482,7 @@ export default function NecoMobileDirectory() {
                     <div className="p-4 space-y-3">
                       <div className="flex items-start justify-between gap-2.5">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Logo toko (avatar_url) */}
                           <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-emerald-50 text-emerald-700 font-bold border border-slate-200 shrink-0 flex items-center justify-center overflow-hidden">
                             {shop.avatar_url ? (
                               <img
@@ -516,18 +524,19 @@ export default function NecoMobileDirectory() {
                   {/* Bottom Action */}
                   <div className="p-4 pt-0">
                     <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                      <Link
-                        href={`/shop/${shop.id}`}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1 transition-colors min-w-0"
+                      <button
+                        type="button"
+                        onClick={() => setDetailShop(shop)}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1 transition-colors min-w-0 cursor-pointer"
                       >
                         <span className="truncate">Lihat Toko</span>
                         <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                      </Link>
+                      </button>
 
                       <button
                         type="button"
                         onClick={() => setMenuShop(shop)}
-                        className="flex-1 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0"
+                        className="flex-1 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 font-semibold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0 cursor-pointer"
                       >
                         <UtensilsCrossed className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">Menu & Pesan</span>
@@ -540,6 +549,22 @@ export default function NecoMobileDirectory() {
           </div>
         )}
       </main>
+
+      {/* Modal Detail Toko */}
+      <ShopDetailModal
+        isOpen={!!detailShop}
+        onClose={() => setDetailShop(null)}
+        shopId={detailShop?.id ?? null}
+        statusLabel={detailStatus?.label ?? ""}
+        isOpenNow={detailStatus?.isOpenNow ?? false}
+        todayDow={now.dow}
+        onOpenMenu={() => {
+          // Tutup detail, lalu buka menu toko yang sama
+          const target = detailShop;
+          setDetailShop(null);
+          setMenuShop(target);
+        }}
+      />
 
       {/* Modal Menu Produk & Pemesanan */}
       <ShopMenuModal

@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ShieldAlert,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -159,7 +160,6 @@ export default function DashboardLayout({
   const [allowedMenus, setAllowedMenus] = useState<string[]>([]);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [pendingOrders, setPendingOrders] = useState(0);
-  const [isTogglingStatus, setIsTogglingStatus] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [toast, setToast] = useState<{
     type: "success" | "error";
@@ -293,9 +293,8 @@ export default function DashboardLayout({
     };
   }, [isSidebarOpen]);
 
-  // 2. Ubah status buka/tutup (hanya pemilik)
+  // 2. Ubah status buka/tutup toko (dipakai oleh sinkronisasi otomatis jam operasional)
   const applyStatus = async (newStatus: boolean, auto = false) => {
-    setIsTogglingStatus(true);
     try {
       const { error } = await supabase
         .from("shops")
@@ -321,20 +320,12 @@ export default function DashboardLayout({
       const message = err instanceof Error ? err.message : "Gagal mengubah status toko";
       console.error("Gagal mengubah status toko:", message);
       showToast("error", "Gagal mengubah status toko. Silakan coba lagi.");
-    } finally {
-      setIsTogglingStatus(false);
     }
-  };
-
-  const handleToggleStatus = () => {
-    if (!isOwner || !shop || isTogglingStatus) return;
-    applyStatus(!shop.is_open);
   };
 
   // 3. Sinkron otomatis dengan jam operasional (dijalankan di sisi pemilik)
   //    - Saat data dimuat, status disesuaikan dengan jadwal
   //    - Setelah itu dicek tiap 30 detik; status hanya berubah saat jadwal berganti
-  //      (jadi saklar manual tetap bisa dipakai di antara pergantian jadwal)
   useEffect(() => {
     if (!isOwner || hours.length === 0) return;
 
@@ -678,95 +669,55 @@ export default function DashboardLayout({
           })}
         </nav>
 
-        {/* Footer Sidebar: Card akun + saklar status toko */}
+        {/* Footer Sidebar: Card akun (HIJAU) dengan ikon hiasan */}
         <div className="shrink-0 p-3 border-t border-slate-100">
-          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 space-y-3">
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-md shadow-emerald-600/25 p-3 space-y-3">
+            {/* ===== Hiasan (tidak interaktif) ===== */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/10"
+            />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -bottom-8 -left-6 w-20 h-20 rounded-full bg-white/10"
+            />
+            <Store
+              aria-hidden="true"
+              className="pointer-events-none absolute -top-1 -right-1 w-16 h-16 text-white/15 rotate-12"
+            />
+            <Sparkles
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-2.5 right-3 w-4 h-4 text-white/30"
+            />
+
             {/* Siapa yang login */}
-            <div className="flex items-center gap-3">
+            <div className="relative flex items-center gap-3">
               {userInfo?.avatar ? (
                 <img
                   src={userInfo.avatar}
                   alt={userInfo.name}
-                  className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
+                  className="w-10 h-10 rounded-full object-cover border-2 border-white/40 shrink-0"
                 />
               ) : (
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${
-                    isOwner ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
-                  }`}
-                >
+                <div className="w-10 h-10 rounded-full bg-white/20 text-white border-2 border-white/30 flex items-center justify-center text-xs font-extrabold shrink-0">
                   {getInitials(userInfo?.name || "?")}
                 </div>
               )}
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-extrabold text-slate-900 truncate leading-tight">
+              <div className="min-w-0 flex-1 pr-8">
+                <p className="text-xs font-extrabold text-white truncate leading-tight">
                   {userInfo?.name || "Pengguna"}
                 </p>
                 {userInfo?.email && (
-                  <p className="text-[10px] text-slate-400 truncate mt-0.5">{userInfo.email}</p>
+                  <p className="text-[10px] text-emerald-100 truncate mt-0.5">
+                    {userInfo.email}
+                  </p>
                 )}
               </div>
             </div>
 
-            <span
-              className={`inline-flex max-w-full items-center px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                isOwner
-                  ? "bg-purple-50 text-purple-700 border-purple-200"
-                  : "bg-blue-50 text-blue-700 border-blue-200"
-              }`}
-            >
+            <span className="relative inline-flex max-w-full items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/15 text-white border border-white/25">
               <span className="truncate">{roleLabel}</span>
             </span>
-
-            <div className="h-px bg-slate-200/80" />
-
-            {/* Saklar status toko */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p
-                  className={`text-xs font-bold leading-tight flex items-center gap-1.5 ${
-                    shop?.is_open ? "text-emerald-700" : "text-rose-700"
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      shop?.is_open ? "bg-emerald-500" : "bg-rose-500"
-                    }`}
-                  />
-                  {shop?.is_open ? "Toko Buka" : "Toko Tutup"}
-                </p>
-                <p className="text-[10px] text-slate-500 leading-tight mt-1">
-                  {!isOwner
-                    ? "Diatur oleh pemilik toko"
-                    : hours.length > 0
-                    ? "Otomatis sesuai jam operasional"
-                    : "Atur jam operasional untuk otomatis"}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {isTogglingStatus && (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
-                )}
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={!!shop?.is_open}
-                  aria-label="Status toko buka atau tutup"
-                  onClick={handleToggleStatus}
-                  disabled={!isOwner || isTogglingStatus || !shop}
-                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${
-                    shop?.is_open ? "bg-emerald-500" : "bg-slate-300"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                      shop?.is_open ? "translate-x-5" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </aside>

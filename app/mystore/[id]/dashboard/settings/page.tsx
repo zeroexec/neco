@@ -19,12 +19,12 @@ import {
   labelCls,
   hintCls,
   errorCls,
-  uploadShopImage,
 } from "./_lib/utils";
 import { PageLoader, SaveBar, SectionHeader } from "./_lib/ui";
 import { useToast } from "./_lib/toast";
 
 type SocialKey = "instagram" | "tiktok" | "facebook" | "youtube" | "x" | "website";
+type ImageKind = "logo" | "cover";
 
 interface ProfileForm {
   name: string;
@@ -64,6 +64,71 @@ const EMPTY: ProfileForm = {
   avatar_url: "",
   cover_url: "",
 };
+
+// ===== Storage gambar: satu bucket "shops", folder berbeda per jenis gambar =====
+// Struktur: shops/{storeId}/logo/...  dan  shops/{storeId}/cover/...
+const BUCKET = "shops";
+const IMAGE_FOLDERS: Record<ImageKind, string> = {
+  logo: "logo",
+  cover: "cover",
+};
+const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB
+const ALLOWED_IMAGE_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+};
+
+type SupabaseClient = ReturnType<typeof createClient>;
+
+// Unggah gambar ke bucket "shops" dan kembalikan URL publiknya
+async function uploadImage(
+  supabase: SupabaseClient,
+  storeId: string,
+  kind: ImageKind,
+  file: File
+): Promise<string> {
+  const ext = ALLOWED_IMAGE_TYPES[file.type];
+  if (!ext) throw new Error("Format gambar harus JPG, PNG, atau WebP.");
+  if (file.size > MAX_IMAGE_SIZE) throw new Error("Ukuran gambar maksimal 2MB.");
+
+  // Nama file unik supaya URL selalu baru (tidak kena cache)
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const path = `${storeId}/${IMAGE_FOLDERS[kind]}/${unique}.${ext}`;
+
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type,
+  });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// Ambil path file di bucket dari URL publik. Mengembalikan null bila bukan dari bucket "shops".
+function getStoragePath(url: string): string | null {
+  if (!url) return null;
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  const raw = url.slice(idx + marker.length).split("?")[0];
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+// Hapus gambar dari storage berdasarkan URL publiknya (gagal tidak menghentikan alur utama)
+async function removeImage(supabase: SupabaseClient, url: string) {
+  const path = getStoragePath(url);
+  if (!path) return;
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) console.warn("Gagal menghapus gambar lama:", error.message);
+}
 
 // Daftar media sosial. hosts kosong = domain apa pun diizinkan (untuk website).
 const SOCIALS: {
@@ -177,13 +242,18 @@ export default function ShopProfilePage({
   const logoInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const lastAutoRef = useRef<boolean | null>(null);
+  // URL gambar yang sudah tersimpan di database (untuk tahu mana yang harus dihapus)
+  const savedImagesRef = useRef<{ avatar: string; cover: string }>({
+    avatar: "",
+    cover: "",
+  });
 
   const [form, setForm] = useState<ProfileForm>(EMPTY);
   const [shopCode, setShopCode] = useState("");
   const [hours, setHours] = useState<OperatingHour[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [uploading, setUploading] = useState<"logo" | "cover" | null>(null);
+  const [uploading, setUploading] = useState<ImageKind | null>(null);
   const [copied, setCopied] = useState(false);
 
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
@@ -215,6 +285,10 @@ export default function ShopProfilePage({
         toast.error(error.message || "Gagal memuat data toko.");
       } else if (data) {
         setShopCode(data.shop_code ?? "");
+        savedImagesRef.current = {
+          avatar: data.avatar_url ?? "",
+          cover: data.cover_url ?? "",
+        };
         setForm({
           name: data.name ?? "",
           category: data.category ?? "",
@@ -278,7 +352,7 @@ export default function ShopProfilePage({
 
   const handleUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    kind: "logo" | "cover"
+    kind: ImageKind
   ) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -286,7 +360,16 @@ export default function ShopProfilePage({
 
     try {
       setUploading(kind);
-      const url = await uploadShopImage(supabase, storeId, kind, file);
+      const url = await uploadImage(supabase, storeId, kind, file);
+
+      // Jika sebelumnya sudah ada upload yang belum disimpan, hapus file itu (yatim)
+      const current = kind === "logo" ? form.avatar_url : form.cover_url;
+      const saved =
+        kind === "logo" ? savedImagesRef.current.avatar : savedImagesRef.current.cover;
+      if (current && current !== saved) {
+        await removeImage(supabase, current);
+      }
+
       set(kind === "logo" ? "avatar_url" : "cover_url", url);
       toast.success(
         `${kind === "logo" ? "Logo" : "Foto toko"} terunggah. Klik "Simpan Perubahan" untuk menerapkan.`
@@ -296,6 +379,15 @@ export default function ShopProfilePage({
     } finally {
       setUploading(null);
     }
+  };
+
+  const handleRemoveCover = async () => {
+    // Bila foto ini belum tersimpan (baru diunggah), langsung hapus filenya.
+    // Bila sudah tersimpan, filenya dihapus setelah "Simpan Perubahan".
+    if (form.cover_url && form.cover_url !== savedImagesRef.current.cover) {
+      await removeImage(supabase, form.cover_url);
+    }
+    set("cover_url", "");
   };
 
   const waDigits = form.whatsapp_number.replace(/\D/g, "");
@@ -346,6 +438,20 @@ export default function ShopProfilePage({
         .eq("id", storeId);
 
       if (error) throw error;
+
+      // Data sudah tersimpan -> hapus gambar lama yang tidak dipakai lagi dari storage
+      const prev = savedImagesRef.current;
+      if (prev.avatar && prev.avatar !== form.avatar_url) {
+        await removeImage(supabase, prev.avatar);
+      }
+      if (prev.cover && prev.cover !== form.cover_url) {
+        await removeImage(supabase, prev.cover);
+      }
+      savedImagesRef.current = {
+        avatar: form.avatar_url,
+        cover: form.cover_url,
+      };
+
       toast.success("Perubahan berhasil disimpan!");
     } catch (err: any) {
       toast.error(err.message || "Gagal menyimpan perubahan.");
@@ -498,7 +604,7 @@ export default function ShopProfilePage({
           {form.cover_url && (
             <button
               type="button"
-              onClick={() => set("cover_url", "")}
+              onClick={handleRemoveCover}
               className="text-[11px] font-semibold text-rose-600 hover:text-rose-700"
             >
               Hapus foto
