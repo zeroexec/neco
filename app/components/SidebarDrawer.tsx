@@ -13,6 +13,7 @@ import {
   HelpCircle,
   LogOut,
   LogIn,
+  BadgeCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -41,6 +42,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Beranda", href: "/", Icon: Home },
   { label: "Toko Saya", href: "/mystore", Icon: Store },
+  { label: "Dashboard Karyawan", href: "/employee", Icon: BadgeCheck },
   { label: "Profil", href: "/profile", Icon: User },
   { label: "Pengaturan", href: "/settings", Icon: Settings },
   { label: "Bantuan", href: "/help", Icon: HelpCircle },

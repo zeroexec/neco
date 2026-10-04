@@ -2,7 +2,17 @@
 
 import React, { use, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Phone, Power, Upload, Loader2, ImagePlus, Link2, Globe } from "lucide-react";
+import {
+  Phone,
+  Power,
+  Upload,
+  Loader2,
+  ImagePlus,
+  Link2,
+  Globe,
+  Copy,
+  Check,
+} from "lucide-react";
 import {
   inputCls,
   inputIconCls,
@@ -30,6 +40,13 @@ interface ProfileForm {
   is_open: boolean;
   avatar_url: string;
   cover_url: string;
+}
+
+interface OperatingHour {
+  day_of_week: number; // 0 = Minggu, 1 = Senin, ... 6 = Sabtu (sama dengan Date.getDay())
+  open_time: string | null; // "HH:MM:SS"
+  close_time: string | null;
+  is_closed: boolean;
 }
 
 const EMPTY: ProfileForm = {
@@ -117,6 +134,37 @@ function parseSocialUrl(
   }
 }
 
+// ===== Helper: cek apakah toko seharusnya buka sekarang (sesuai jam operasional) =====
+const toMinutes = (t: string | null): number | null => {
+  if (!t) return null;
+  const [h, m] = t.split(":");
+  return Number(h) * 60 + Number(m);
+};
+
+const isOpenNow = (hours: OperatingHour[], now: Date): boolean => {
+  const day = now.getDay();
+  const prevDay = (day + 6) % 7;
+  const cur = now.getHours() * 60 + now.getMinutes();
+
+  // Jam buka yang melewati tengah malam dari hari kemarin (mis. 18:00 - 02:00)
+  const yesterday = hours.find((h) => h.day_of_week === prevDay);
+  if (yesterday && !yesterday.is_closed) {
+    const yo = toMinutes(yesterday.open_time);
+    const yc = toMinutes(yesterday.close_time);
+    if (yo !== null && yc !== null && yc < yo && cur < yc) return true;
+  }
+
+  const today = hours.find((h) => h.day_of_week === day);
+  if (!today || today.is_closed) return false;
+
+  const o = toMinutes(today.open_time);
+  const c = toMinutes(today.close_time);
+
+  if (o === null || c === null || o === c) return true; // tanpa jam / 24 jam
+  if (c > o) return cur >= o && cur < c;
+  return cur >= o; // melewati tengah malam: sisanya dicek lewat hari berikutnya
+};
+
 export default function ShopProfilePage({
   params,
 }: {
@@ -128,11 +176,15 @@ export default function ShopProfilePage({
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
+  const lastAutoRef = useRef<boolean | null>(null);
 
   const [form, setForm] = useState<ProfileForm>(EMPTY);
+  const [shopCode, setShopCode] = useState("");
+  const [hours, setHours] = useState<OperatingHour[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [uploading, setUploading] = useState<"logo" | "cover" | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -141,19 +193,28 @@ export default function ShopProfilePage({
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("shops")
-        .select(
-          "name, category, whatsapp_number, description, instagram_url, tiktok_url, facebook_url, youtube_url, x_url, website_url, is_open, avatar_url, cover_url"
-        )
-        .eq("id", storeId)
-        .single();
+      const [shopRes, hoursRes] = await Promise.all([
+        supabase
+          .from("shops")
+          .select(
+            "name, category, whatsapp_number, description, instagram_url, tiktok_url, facebook_url, youtube_url, x_url, website_url, is_open, avatar_url, cover_url, shop_code"
+          )
+          .eq("id", storeId)
+          .single(),
+        supabase
+          .from("shop_operating_hours")
+          .select("day_of_week, open_time, close_time, is_closed")
+          .eq("shop_id", storeId),
+      ]);
 
       if (cancelled) return;
+
+      const { data, error } = shopRes;
 
       if (error) {
         toast.error(error.message || "Gagal memuat data toko.");
       } else if (data) {
+        setShopCode(data.shop_code ?? "");
         setForm({
           name: data.name ?? "",
           category: data.category ?? "",
@@ -170,6 +231,11 @@ export default function ShopProfilePage({
           cover_url: data.cover_url ?? "",
         });
       }
+
+      if (!hoursRes.error) {
+        setHours((hoursRes.data as OperatingHour[]) || []);
+      }
+
       setIsLoading(false);
     })();
 
@@ -177,6 +243,38 @@ export default function ShopProfilePage({
       cancelled = true;
     };
   }, [supabase, storeId, toast]);
+
+  // Status toko otomatis mengikuti jam operasional.
+  // Disesuaikan saat halaman dimuat, lalu dicek tiap 30 detik; berubah hanya saat jadwal berganti,
+  // jadi saklar manual tetap bisa dipakai di antara pergantian jadwal.
+  useEffect(() => {
+    if (isLoading || hours.length === 0) return;
+
+    const tick = () => {
+      const shouldBeOpen = isOpenNow(hours, new Date());
+      if (lastAutoRef.current === shouldBeOpen) return;
+      lastAutoRef.current = shouldBeOpen;
+      setForm((prev) =>
+        prev.is_open === shouldBeOpen ? prev : { ...prev, is_open: shouldBeOpen }
+      );
+    };
+
+    tick();
+    const timer = setInterval(tick, 30_000);
+    return () => clearInterval(timer);
+  }, [isLoading, hours]);
+
+  const handleCopyCode = async () => {
+    if (!shopCode) return;
+    try {
+      await navigator.clipboard.writeText(shopCode);
+      setCopied(true);
+      toast.success("Kode toko disalin.");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Gagal menyalin kode toko.");
+    }
+  };
 
   const handleUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -268,6 +366,34 @@ export default function ShopProfilePage({
         description="Identitas, tampilan, dan kontak toko"
       />
 
+      {/* Kode toko (otomatis, tidak bisa diubah) */}
+      <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-slate-800">Kode Toko</p>
+          <p className="text-[10px] text-slate-400">
+            Kode unik, dibuat otomatis dan tidak bisa diubah
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-sm font-bold tracking-widest text-slate-900">
+            {shopCode || "-"}
+          </span>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            disabled={!shopCode}
+            aria-label="Salin kode toko"
+            className="p-2 border border-slate-200 hover:bg-white text-slate-600 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {copied ? (
+              <Check className="w-4 h-4 text-emerald-600" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* Status toko */}
       <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl gap-3">
         <div className="flex items-center gap-3">
@@ -283,11 +409,18 @@ export default function ShopProfilePage({
                 ? "Toko sedang BUKA dan siap menerima pesanan"
                 : "Toko sedang TUTUP sementara"}
             </p>
+            <p className="text-[10px] text-slate-400">
+              {hours.length > 0
+                ? "Otomatis mengikuti jam operasional"
+                : "Atur jam operasional agar status berubah otomatis"}
+            </p>
           </div>
         </div>
         <label className="relative inline-flex items-center cursor-pointer shrink-0">
           <input
             type="checkbox"
+            role="switch"
+            aria-label="Status toko buka atau tutup"
             checked={form.is_open}
             onChange={(e) => set("is_open", e.target.checked)}
             className="sr-only peer"
