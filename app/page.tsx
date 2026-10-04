@@ -131,6 +131,9 @@ function getShopStatus(
 
 export default function NecoMobileDirectory() {
   const [selectedCategory, setSelectedCategory] = useState("Semua");
+  // Teks yang sedang diketik di kotak input (belum memfilter)
+  const [searchInput, setSearchInput] = useState("");
+  // Kata kunci yang sudah dikonfirmasi lewat tombol Cari (dipakai untuk filter)
   const [searchQuery, setSearchQuery] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
@@ -242,6 +245,11 @@ export default function NecoMobileDirectory() {
     setIsMenuOpen(false);
   };
 
+  // Pencarian hanya dijalankan lewat tombol "Cari"
+  const handleSearch = () => {
+    setSearchQuery(searchInput.trim());
+  };
+
   // Daftar kategori diambil dari kolom shops.category
   const categories = useMemo(() => {
     const unique = Array.from(
@@ -264,54 +272,40 @@ export default function NecoMobileDirectory() {
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-800 pb-12 font-sans relative">
-      {/* Top Bar */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs w-full">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-          {/* Header Top */}
-          <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4">
-            <div className="flex items-center gap-3 shrink-0">
-              {/* Tombol Menu Hamburger */}
+      {/* Header: hijau gradasi, pencarian sebagai pusat perhatian */}
+      <header className="relative z-40 w-full bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-3 sm:pt-4 pb-7 sm:pb-12">
+          {/* Baris atas: menu, logo, akun */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               <button
                 onClick={() => setIsMenuOpen(true)}
-                className="p-2 -ml-2 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
+                className="p-2 -ml-2 text-white hover:bg-emerald-800/40 active:bg-emerald-800/60 rounded-xl transition-colors"
                 aria-label="Buka Menu"
               >
                 <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
 
               <div className="flex items-center gap-2">
-                <div className="p-1.5 sm:p-2 bg-emerald-600 rounded-xl text-white">
+                <div className="p-1.5 sm:p-2 bg-white rounded-xl text-emerald-600">
                   <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
-                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">
-                  NECO<span className="text-emerald-600">.</span>
+                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white">
+                  NECO<span className="text-emerald-200">.</span>
                 </span>
               </div>
             </div>
 
-            {/* Search untuk layar besar */}
-            <div className="hidden md:flex items-center flex-1 max-w-xl mx-4">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Cari nama toko..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-100 text-slate-800 text-sm pl-9 pr-4 py-2 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:bg-white border border-transparent focus:border-slate-300 transition-all"
-                />
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 shrink-0">
-              {/* Area Auth: Tombol Login atau Bulatan Profile */}
+            {/* Area Auth: Tombol Login atau Bulatan Profile */}
+            <div className="shrink-0">
               {userProfile ? (
                 <div className="relative">
                   <button
                     onClick={() =>
                       setIsProfileDropdownOpen(!isProfileDropdownOpen)
                     }
-                    className="flex items-center gap-2 p-0.5 rounded-full border-2 border-emerald-600 hover:opacity-90 transition-opacity focus:outline-hidden"
+                    className="flex items-center gap-2 p-0.5 rounded-full border-2 border-white hover:opacity-90 transition-opacity focus:outline-hidden"
+                    aria-label="Menu Profil"
                   >
                     {userProfile.avatar_url ? (
                       <img
@@ -330,7 +324,7 @@ export default function NecoMobileDirectory() {
 
                   {/* Dropdown Menu Profile */}
                   {isProfileDropdownOpen && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-40 text-xs space-y-1">
+                    <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50 text-xs space-y-1">
                       <div className="px-3 py-2 border-b border-slate-100">
                         <p className="font-bold text-slate-900 truncate">
                           {userProfile.full_name || "User"}
@@ -359,7 +353,7 @@ export default function NecoMobileDirectory() {
               ) : (
                 <Link
                   href="/auth/login"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs sm:text-sm rounded-xl transition-colors shadow-xs"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-white hover:bg-emerald-50 active:bg-emerald-100 text-emerald-700 font-bold text-xs sm:text-sm rounded-xl transition-colors"
                 >
                   <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span>Masuk</span>
@@ -368,40 +362,57 @@ export default function NecoMobileDirectory() {
             </div>
           </div>
 
-          {/* Search Box - Mobile Only */}
-          <div className="relative flex md:hidden items-center">
-            <div className="relative flex-1 min-w-0">
+          {/* Pusat perhatian: judul singkat + kotak pencarian */}
+          <div className="max-w-2xl mx-auto text-center pt-6 sm:pt-10">
+            <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+              Cari toko favoritmu
+            </h1>
+            <p className="mt-1.5 sm:mt-2 text-sm sm:text-base text-emerald-50">
+              Temukan toko terdekat dan pesan langsung.
+            </p>
+
+            <div className="relative mt-5 sm:mt-6">
+              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Cari nama toko..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-100 text-slate-800 text-xs pl-8 pr-3 py-2 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:bg-white border border-transparent focus:border-slate-300 transition-all truncate"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="w-full h-12 sm:h-14 bg-white text-slate-800 text-sm sm:text-base pl-11 sm:pl-12 pr-24 sm:pr-32 rounded-2xl shadow-lg border-2 border-transparent focus:border-emerald-300 focus:outline-hidden placeholder:text-slate-400 transition-colors"
+                aria-label="Cari nama toko"
               />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+              <button
+                type="button"
+                onClick={handleSearch}
+                className="absolute right-1.5 top-1.5 bottom-1.5 px-4 sm:px-6 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Search className="w-4 h-4 sm:hidden" />
+                <span className="hidden sm:inline">Cari</span>
+                <span className="sm:hidden sr-only">Cari</span>
+              </button>
             </div>
           </div>
         </div>
-
-        {/* Categories Bar (dari kolom shops.category) */}
-        <div className="border-t border-slate-100 bg-white">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex gap-2 overflow-x-auto py-2.5 no-scrollbar w-full">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${
-                  selectedCategory === cat
-                    ? "bg-emerald-600 text-white font-semibold shadow-xs"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 active:bg-slate-200"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
       </header>
+
+      {/* Categories Bar (dari kolom shops.category) */}
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs w-full">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex gap-2 overflow-x-auto py-2.5 no-scrollbar w-full">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${
+                selectedCategory === cat
+                  ? "bg-emerald-600 text-white font-semibold shadow-xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 active:bg-slate-200"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Sidebar (komponen terpisah) */}
       <SidebarDrawer
@@ -416,6 +427,11 @@ export default function NecoMobileDirectory() {
         <div className="flex items-center text-xs sm:text-sm text-slate-500 px-0.5">
           <span>
             Menampilkan <strong>{filteredShops.length} toko</strong>
+            {searchQuery && (
+              <>
+                {" "}untuk &ldquo;<strong>{searchQuery}</strong>&rdquo;
+              </>
+            )}
           </span>
         </div>
 

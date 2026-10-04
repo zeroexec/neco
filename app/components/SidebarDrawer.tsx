@@ -14,6 +14,7 @@ import {
   LogOut,
   LogIn,
   BadgeCheck,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -75,7 +76,8 @@ export default function SidebarDrawer({
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        {/* Header */}
+        <div className="px-5 pt-5 pb-4 flex items-center justify-between">
           <Link
             href="/"
             onClick={onClose}
@@ -86,98 +88,115 @@ export default function SidebarDrawer({
               <Sparkles className="w-4 h-4" />
             </div>
             <span className="font-extrabold text-base text-slate-900">
-              NECO<span className="text-emerald-600">.</span> Navigation
+              NECO<span className="text-emerald-600">.</span>
             </span>
           </Link>
           <button
             onClick={onClose}
             aria-label="Tutup menu"
-            className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Area profil pengguna */}
-        {userProfile ? (
-          <Link
-            href="/profile"
-            onClick={onClose}
-            className="p-4 bg-slate-50 hover:bg-slate-100 border-b border-slate-100 flex items-center gap-3 transition-colors"
-          >
-            {userProfile.avatar_url ? (
-              <img
-                src={userProfile.avatar_url}
-                alt={userProfile.full_name || "User"}
-                className="w-10 h-10 rounded-full object-cover border border-emerald-500"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center border border-emerald-500">
-                {(userProfile.full_name || "U").substring(0, 2).toUpperCase()}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-sm text-slate-900 truncate">
-                {userProfile.full_name || "Pengguna"}
-              </p>
-              <p className="text-xs text-slate-500 truncate">
-                {userProfile.email}
-              </p>
-            </div>
-          </Link>
-        ) : (
-          <div className="p-4 bg-slate-50 border-b border-slate-100 space-y-2">
-            <p className="text-xs text-slate-600 font-medium">
-              Selamat datang! Silakan masuk untuk mengakses fitur lengkap.
-            </p>
-            <Link
-              href="/auth/login"
-              onClick={onClose}
-              className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Masuk Ke Akun</span>
-            </Link>
-          </div>
-        )}
-
-        <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {NAV_ITEMS.map(({ label, href, Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                onClick={onClose}
-                aria-current={active ? "page" : undefined}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-colors ${
-                  active
-                    ? "font-semibold text-emerald-700 bg-emerald-50"
-                    : "font-medium text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <Icon
-                  className={`w-4 h-4 ${
-                    active ? "text-emerald-700" : "text-slate-500"
+        {/* Navigasi - pusat perhatian */}
+        <nav className="px-4 pb-4 flex-1 overflow-y-auto">
+          <p className="px-2 mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+            Menu Navigasi
+          </p>
+          <div className="space-y-2">
+            {NAV_ITEMS.map(({ label, href, Icon }) => {
+              const active = isActive(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={onClose}
+                  aria-current={active ? "page" : undefined}
+                  className={`group relative w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm transition-all ${
+                    active
+                      ? "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/25"
+                      : "bg-slate-50 text-slate-800 font-semibold hover:bg-emerald-50 hover:text-emerald-700"
                   }`}
-                />
-                {label}
-              </Link>
-            );
-          })}
+                >
+                  <span
+                    className={`flex items-center justify-center w-9 h-9 rounded-xl transition-colors ${
+                      active
+                        ? "bg-white/20 text-white"
+                        : "bg-white text-slate-500 shadow-xs group-hover:text-emerald-600"
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                  </span>
+                  <span className="flex-1">{label}</span>
+                  <ChevronRight
+                    className={`w-4 h-4 transition-transform group-hover:translate-x-0.5 ${
+                      active ? "text-white/80" : "text-slate-300"
+                    }`}
+                  />
+                </Link>
+              );
+            })}
+          </div>
         </nav>
 
-        {userProfile && (
-          <div className="p-3 border-t border-slate-100">
-            <button
-              onClick={onLogout}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              Keluar
-            </button>
-          </div>
-        )}
+        {/* Area profil pengguna - di bawah, dalam card hijau */}
+        <div className="p-4">
+          {userProfile ? (
+            <div className="rounded-2xl bg-linear-to-br from-emerald-500 to-emerald-700 p-3 text-white shadow-lg shadow-emerald-600/20">
+              <Link
+                href="/profile"
+                onClick={onClose}
+                className="flex items-center gap-3 rounded-xl p-1 hover:bg-white/10 transition-colors"
+              >
+                {userProfile.avatar_url ? (
+                  <img
+                    src={userProfile.avatar_url}
+                    alt={userProfile.full_name || "User"}
+                    className="w-11 h-11 rounded-full object-cover border-2 border-white/70"
+                  />
+                ) : (
+                  <div className="w-11 h-11 rounded-full bg-white/20 text-white font-bold text-sm flex items-center justify-center border-2 border-white/70">
+                    {(userProfile.full_name || "U")
+                      .substring(0, 2)
+                      .toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-sm truncate">
+                    {userProfile.full_name || "Pengguna"}
+                  </p>
+                  <p className="text-xs text-emerald-100 truncate">
+                    {userProfile.email}
+                  </p>
+                </div>
+              </Link>
+
+              <button
+                onClick={onLogout}
+                className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-semibold transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                Keluar
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-linear-to-br from-emerald-500 to-emerald-700 p-4 text-white shadow-lg shadow-emerald-600/20 space-y-3">
+              <p className="text-xs text-emerald-50 font-medium leading-relaxed">
+                Selamat datang! Silakan masuk untuk mengakses fitur lengkap.
+              </p>
+              <Link
+                href="/auth/login"
+                onClick={onClose}
+                className="w-full py-2.5 bg-white text-emerald-700 hover:bg-emerald-50 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Masuk Ke Akun</span>
+              </Link>
+            </div>
+          )}
+        </div>
       </aside>
     </>
   );

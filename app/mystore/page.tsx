@@ -16,6 +16,10 @@ import {
   AlertCircle,
   Truck,
   ShoppingBag,
+  Sparkles,
+  Users,
+  TrendingUp,
+  Smartphone,
 } from "lucide-react";
 
 interface MyShop {
@@ -46,6 +50,24 @@ const fieldClass =
   "w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-base sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 disabled:bg-slate-50 transition-colors";
 
 const labelClass = "block text-sm font-semibold text-slate-700 mb-1.5";
+
+const BENEFITS = [
+  {
+    Icon: Users,
+    title: "Dijangkau pembeli sekitar",
+    desc: "Toko Anda tampil di direktori dan mudah ditemukan.",
+  },
+  {
+    Icon: Smartphone,
+    title: "Menu & pesanan online",
+    desc: "Pembeli memesan langsung dari ponsel mereka.",
+  },
+  {
+    Icon: TrendingUp,
+    title: "Kelola dalam satu tempat",
+    desc: "Kasir, produk, dan pesanan ada di dashboard toko.",
+  },
+];
 
 export default function MyStoresPage() {
   const router = useRouter();
@@ -224,36 +246,91 @@ export default function MyStoresPage() {
     }
   };
 
+  // ===== Teks hero sesuai kondisi pengguna =====
+  const hasShops = !isLoading && !loadError && shops.length > 0;
+  const hasNoShops = !isLoading && !loadError && shops.length === 0;
+  const openCount = shops.filter((s) => s.is_open).length;
+
+  let heroBadge = "Toko Saya";
+  let heroTitle = "Toko Saya";
+  let heroDesc = "Memuat toko Anda...";
+
+  if (hasNoShops) {
+    heroBadge = "Mulai berjualan";
+    heroTitle = "Jangkau ribuan pembeli di sekitar Anda";
+    heroDesc =
+      "Buka toko di NECO, tampilkan menu, dan terima pesanan langsung dari pembeli terdekat, semua dalam hitungan menit.";
+  } else if (hasShops) {
+    heroBadge = "Pusat kendali toko";
+    heroTitle =
+      shops.length === 1
+        ? "Toko Anda siap menyambut pembeli"
+        : "Kelola semua toko Anda di satu tempat";
+    heroDesc =
+      "Perbarui menu, pantau pesanan, dan pastikan pembeli di sekitar selalu menemukan toko Anda.";
+  } else if (loadError) {
+    heroDesc = "Kelola toko Anda di satu tempat.";
+  }
+
   // ===== UI =====
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-800 font-sans antialiased">
-      {/* Header */}
-      <header className="sticky top-0 z-30 w-full bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
-          <Link
-            href="/"
-            aria-label="Kembali"
-            className="shrink-0 w-9 h-9 -ml-1.5 inline-flex items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-
-          <div className="min-w-0 flex-1">
-            <h1 className="font-extrabold text-base sm:text-lg text-slate-900 leading-tight truncate">
-              Toko Saya
-            </h1>
-            <p className="text-xs text-slate-500 truncate">
-              {isLoading ? "Memuat..." : `${shops.length} toko`}
-            </p>
+      {/* Header lebar: hijau gradasi, seragam dengan beranda */}
+      <header className="relative z-30 w-full bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-3 sm:pt-4 pb-8 sm:pb-12">
+          {/* Baris atas */}
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              aria-label="Kembali"
+              className="shrink-0 w-9 h-9 -ml-1.5 inline-flex items-center justify-center rounded-xl text-white hover:bg-emerald-800/40 active:bg-emerald-800/60 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+            <span className="font-bold text-sm sm:text-base text-white">Toko Saya</span>
           </div>
 
-          <button
-            onClick={openModal}
-            className="shrink-0 inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold text-sm py-2.5 px-4 rounded-xl transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Toko Baru</span>
-          </button>
+          {/* Hero */}
+          <div className="max-w-2xl mx-auto text-center pt-5 sm:pt-8">
+            <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-bold text-emerald-50 bg-white/15 px-3 py-1 rounded-full">
+              <Sparkles className="w-3.5 h-3.5" />
+              {heroBadge}
+            </span>
+
+            <h1 className="mt-3 text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+              {heroTitle}
+            </h1>
+            <p className="mt-2 text-sm sm:text-base text-emerald-50 leading-relaxed">
+              {heroDesc}
+            </p>
+
+            {hasShops && (
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 px-3 py-1.5 rounded-full">
+                  <Store className="w-3.5 h-3.5" />
+                  {shops.length} toko
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-white/15 px-3 py-1.5 rounded-full">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      openCount > 0 ? "bg-emerald-300" : "bg-slate-300"
+                    }`}
+                  />
+                  {openCount} sedang buka
+                </span>
+              </div>
+            )}
+
+            {(hasShops || hasNoShops) && (
+              <button
+                onClick={openModal}
+                className="mt-5 sm:mt-6 inline-flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 active:bg-emerald-100 text-emerald-700 font-bold text-sm sm:text-base py-3 px-6 rounded-2xl shadow-lg transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span>{hasNoShops ? "Buat Toko Pertama" : "Tambah Toko Baru"}</span>
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -293,28 +370,33 @@ export default function MyStoresPage() {
             </button>
           </div>
         ) : shops.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center">
-            <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Store className="w-7 h-7" />
-            </div>
-            <p className="font-bold text-lg text-slate-900">Belum punya toko</p>
-            <p className="text-sm text-slate-500 mt-1 mb-6 max-w-sm mx-auto">
-              Buat toko pertama Anda dan mulai berjualan ke pembeli di sekitar.
+          <div className="space-y-3">
+            <p className="px-0.5 text-xs sm:text-sm font-semibold text-slate-500">
+              Kenapa berjualan di NECO?
             </p>
-            <button
-              onClick={openModal}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Buat Toko</span>
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {BENEFITS.map(({ Icon, title, desc }) => (
+                <div
+                  key={title}
+                  className="bg-white rounded-2xl border border-slate-200 p-5 flex items-start gap-3.5"
+                >
+                  <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-slate-900">{title}</p>
+                    <p className="text-sm text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {shops.map((shop) => (
               <article
                 key={shop.id}
-                className="bg-white rounded-2xl border border-slate-200 hover:border-slate-300 p-4 flex flex-col gap-4 transition-colors"
+                className="bg-white rounded-2xl border border-slate-200 hover:border-emerald-200 hover:shadow-md p-4 flex flex-col gap-4 transition-all"
               >
                 <div className="flex items-start gap-3">
                   {shop.avatar_url ? (
@@ -399,7 +481,7 @@ export default function MyStoresPage() {
                   <Link
                     href={`/mystore/${shop.id}/dashboard/settings`}
                     aria-label={`Pengaturan ${shop.name}`}
-                    className="shrink-0 w-10 h-10 inline-flex items-center justify-center border border-slate-300 text-slate-600 hover:bg-slate-50 active:bg-slate-100 rounded-xl transition-colors"
+                    className="shrink-0 w-10 h-10 inline-flex items-center justify-center border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 rounded-xl transition-colors"
                   >
                     <Settings className="w-4 h-4" />
                   </Link>
@@ -421,13 +503,18 @@ export default function MyStoresPage() {
             aria-modal="true"
             aria-labelledby="create-store-title"
             onClick={(e) => e.stopPropagation()}
-            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl max-h-[92dvh] flex flex-col"
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden"
           >
             {/* Header modal */}
             <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-5 pb-4 border-b border-slate-100">
-              <h2 id="create-store-title" className="font-extrabold text-lg text-slate-900">
-                Buat Toko Baru
-              </h2>
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-emerald-600 rounded-lg text-white">
+                  <Store className="w-4 h-4" />
+                </div>
+                <h2 id="create-store-title" className="font-extrabold text-lg text-slate-900">
+                  Buat Toko Baru
+                </h2>
+              </div>
               <button
                 onClick={closeModal}
                 aria-label="Tutup"
