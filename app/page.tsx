@@ -1,21 +1,16 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import Header from "./components/Header";
 import ShopMenuModal from "./components/ShopMenuModal";
 import ShopDetailModal from "./components/ShopDetailModal";
 import SidebarDrawer, { UserProfile } from "./components/SidebarDrawer";
 import {
-  Search,
   Store,
   ChevronRight,
   UtensilsCrossed,
   Clock,
-  Sparkles,
-  Menu,
-  LogOut,
-  LogIn,
   Loader2,
 } from "lucide-react";
 
@@ -136,7 +131,6 @@ export default function NecoMobileDirectory() {
   // Kata kunci yang sudah dikonfirmasi lewat tombol Cari (dipakai untuk filter)
   const [searchQuery, setSearchQuery] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   // State Data Real dari Supabase
   const [shops, setShops] = useState<ShopItem[]>([]);
@@ -241,11 +235,10 @@ export default function NecoMobileDirectory() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUserProfile(null);
-    setIsProfileDropdownOpen(false);
     setIsMenuOpen(false);
   };
 
-  // Pencarian hanya dijalankan lewat tombol "Cari"
+  // Pencarian hanya dijalankan lewat tombol "Cari" / Enter
   const handleSearch = () => {
     setSearchQuery(searchInput.trim());
   };
@@ -272,131 +265,20 @@ export default function NecoMobileDirectory() {
 
   return (
     <div className="w-full min-h-screen bg-slate-50 text-slate-800 pb-12 font-sans relative">
-      {/* Header: hijau gradasi, pencarian sebagai pusat perhatian */}
-      <header className="relative z-40 w-full bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-3 sm:pt-4 pb-7 sm:pb-12">
-          {/* Baris atas: menu, logo, akun */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              <button
-                onClick={() => setIsMenuOpen(true)}
-                className="p-2 -ml-2 text-white hover:bg-emerald-800/40 active:bg-emerald-800/60 rounded-xl transition-colors"
-                aria-label="Buka Menu"
-              >
-                <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
-              </button>
+      {/* Header (komponen terpisah): baris atas menempel; pencarian naik dan
+          sejajar dengan baris atas saat di-scroll; teks sambutan tergulung hilang */}
+<Header
+  userProfile={userProfile}
+  onOpenMenu={() => setIsMenuOpen(true)}
+  onLogout={handleLogout}
+  searchInput={searchInput}
+  onSearchInputChange={setSearchInput}
+  onSearch={handleSearch}
 
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 sm:p-2 bg-white rounded-xl text-emerald-600">
-                  <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
-                </div>
-                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white">
-                  NECO<span className="text-emerald-200">.</span>
-                </span>
-              </div>
-            </div>
-
-            {/* Area Auth: Tombol Login atau Bulatan Profile */}
-            <div className="shrink-0">
-              {userProfile ? (
-                <div className="relative">
-                  <button
-                    onClick={() =>
-                      setIsProfileDropdownOpen(!isProfileDropdownOpen)
-                    }
-                    className="flex items-center gap-2 p-0.5 rounded-full border-2 border-white hover:opacity-90 transition-opacity focus:outline-hidden"
-                    aria-label="Menu Profil"
-                  >
-                    {userProfile.avatar_url ? (
-                      <img
-                        src={userProfile.avatar_url}
-                        alt={userProfile.full_name || "Profil"}
-                        className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center">
-                        {(userProfile.full_name || "U")
-                          .substring(0, 2)
-                          .toUpperCase()}
-                      </div>
-                    )}
-                  </button>
-
-                  {/* Dropdown Menu Profile */}
-                  {isProfileDropdownOpen && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50 text-xs space-y-1">
-                      <div className="px-3 py-2 border-b border-slate-100">
-                        <p className="font-bold text-slate-900 truncate">
-                          {userProfile.full_name || "User"}
-                        </p>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          {userProfile.email}
-                        </p>
-                      </div>
-                      <Link
-                        href="/mystore"
-                        className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 font-medium transition-colors"
-                      >
-                        <Store className="w-3.5 h-3.5 text-slate-500" />
-                        Toko Saya
-                      </Link>
-                      <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-rose-600 hover:bg-rose-50 font-medium transition-colors text-left"
-                      >
-                        <LogOut className="w-3.5 h-3.5" />
-                        Keluar
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <Link
-                  href="/auth/login"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-white hover:bg-emerald-50 active:bg-emerald-100 text-emerald-700 font-bold text-xs sm:text-sm rounded-xl transition-colors"
-                >
-                  <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  <span>Masuk</span>
-                </Link>
-              )}
-            </div>
-          </div>
-
-          {/* Pusat perhatian: judul singkat + kotak pencarian */}
-          <div className="max-w-2xl mx-auto text-center pt-6 sm:pt-10">
-            <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
-              Cari toko favoritmu
-            </h1>
-            <p className="mt-1.5 sm:mt-2 text-sm sm:text-base text-emerald-50">
-              Temukan toko terdekat dan pesan langsung.
-            </p>
-
-            <div className="relative mt-5 sm:mt-6">
-              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Cari nama toko..."
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="w-full h-12 sm:h-14 bg-white text-slate-800 text-sm sm:text-base pl-11 sm:pl-12 pr-24 sm:pr-32 rounded-2xl shadow-lg border-2 border-transparent focus:border-emerald-300 focus:outline-hidden placeholder:text-slate-400 transition-colors"
-                aria-label="Cari nama toko"
-              />
-              <button
-                type="button"
-                onClick={handleSearch}
-                className="absolute right-1.5 top-1.5 bottom-1.5 px-4 sm:px-6 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Search className="w-4 h-4 sm:hidden" />
-                <span className="hidden sm:inline">Cari</span>
-                <span className="sm:hidden sr-only">Cari</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Categories Bar (dari kolom shops.category) */}
-      <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs w-full">
+/>
+      {/* Categories Bar (dari kolom shops.category).
+          top-14 = tinggi baris atas di Header (56px). Ubah jika tinggi itu diubah. */}
+      <div className="sticky top-14 z-20 bg-white border-b border-slate-200 shadow-xs w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex gap-2 overflow-x-auto py-2.5 no-scrollbar w-full">
           {categories.map((cat) => (
             <button

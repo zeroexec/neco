@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -15,6 +15,8 @@ import {
   LogIn,
   BadgeCheck,
   ChevronRight,
+  ClipboardList,
+  Heart,
   type LucideIcon,
 } from "lucide-react";
 
@@ -43,6 +45,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Beranda", href: "/", Icon: Home },
   { label: "Toko Saya", href: "/mystore", Icon: Store },
+  { label: "Daftar Pesanan", href: "/orders", Icon: ClipboardList },
+  { label: "Toko Favorit", href: "/favorites", Icon: Heart },
   { label: "Dashboard Karyawan", href: "/employee", Icon: BadgeCheck },
   { label: "Profil", href: "/profile", Icon: User },
   { label: "Pengaturan", href: "/settings", Icon: Settings },
@@ -60,13 +64,68 @@ export default function SidebarDrawer({
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
+  // Kunci scroll halaman di belakang saat sidebar terbuka.
+  // position: fixed dipakai (bukan hanya overflow: hidden) agar juga bekerja di iOS Safari.
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const body = document.body;
+    const scrollY = window.scrollY;
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+
+    const prev = {
+      position: body.style.position,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
+      overflow: body.style.overflow,
+      paddingRight: body.style.paddingRight,
+    };
+
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+    // Cegah konten bergeser saat scrollbar desktop menghilang
+    if (scrollbarWidth > 0) {
+      body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.left = prev.left;
+      body.style.right = prev.right;
+      body.style.width = prev.width;
+      body.style.overflow = prev.overflow;
+      body.style.paddingRight = prev.paddingRight;
+      // Kembalikan posisi scroll semula
+      window.scrollTo({ top: scrollY, left: 0, behavior: "instant" });
+    };
+  }, [isOpen]);
+
+  // Tutup sidebar dengan tombol Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
   return (
     <>
       {/* Overlay - Tanpa Blur */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-slate-900/50 z-50 transition-opacity"
+          className="fixed inset-0 bg-slate-900/50 z-50 transition-opacity touch-none"
           onClick={onClose}
+          aria-hidden="true"
         />
       )}
 
@@ -75,6 +134,7 @@ export default function SidebarDrawer({
         className={`fixed top-0 left-0 bottom-0 w-4/5 max-w-sm bg-white z-50 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
+        aria-hidden={!isOpen}
       >
         {/* Header */}
         <div className="px-5 pt-5 pb-4 flex items-center justify-between">
@@ -101,7 +161,7 @@ export default function SidebarDrawer({
         </div>
 
         {/* Navigasi - pusat perhatian */}
-        <nav className="px-4 pb-4 flex-1 overflow-y-auto">
+        <nav className="px-4 pb-4 flex-1 overflow-y-auto overscroll-contain">
           <p className="px-2 mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">
             Menu Navigasi
           </p>

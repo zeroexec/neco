@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
   ChevronLeft,
+  ChevronRight,
   Store,
   LayoutDashboard,
   ShoppingBag,
@@ -585,7 +586,7 @@ export default function DashboardLayout({
 
       {/* ================= SIDEBAR (Drawer di mobile, tetap di desktop) ================= */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 md:w-64 bg-white border-r border-slate-200/80 shrink-0 flex flex-col shadow-xl md:shadow-xs transition-transform duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:z-30 md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-4/5 max-w-sm md:w-72 md:max-w-none bg-white border-r border-slate-200/80 shrink-0 flex flex-col shadow-2xl md:shadow-xs transition-transform duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:z-30 md:translate-x-0 ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -630,43 +631,57 @@ export default function DashboardLayout({
           </button>
         </div>
 
-        {/* Navigasi Utama (scroll sendiri bila menu panjang) */}
-        <nav className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-3 space-y-1">
-          <p className="px-3 pt-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-            Menu Utama
+        {/* Navigasi - pusat perhatian (scroll sendiri bila menu panjang) */}
+        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain no-scrollbar px-4 pt-4 pb-4">
+          <p className="px-2 mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+            Menu Navigasi
           </p>
-          {visibleNav.map((item) => {
-            const Icon = item.icon;
-            const isActive = checkIsActive(item.href, item.exact);
+          <div className="space-y-2">
+            {visibleNav.map((item) => {
+              const Icon = item.icon;
+              const isActive = checkIsActive(item.href, item.exact);
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
-                  isActive
-                    ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/20"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </div>
-                {item.badge && (
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`group relative w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm transition-all ${
+                    isActive
+                      ? "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/25"
+                      : "bg-slate-50 text-slate-800 font-semibold hover:bg-emerald-50 hover:text-emerald-700"
+                  }`}
+                >
                   <span
-                    className={`min-w-5 text-center text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                    className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 transition-colors ${
                       isActive
-                        ? "bg-white text-emerald-700"
-                        : "bg-emerald-100 text-emerald-800"
+                        ? "bg-white/20 text-white"
+                        : "bg-white text-slate-500 shadow-xs group-hover:text-emerald-600"
                     }`}
                   >
-                    {item.badge}
+                    <Icon className="w-5 h-5" />
                   </span>
-                )}
-              </Link>
-            );
-          })}
+                  <span className="flex-1 min-w-0 truncate">{item.label}</span>
+                  {item.badge && (
+                    <span
+                      className={`min-w-5 text-center text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                        isActive
+                          ? "bg-white text-emerald-700"
+                          : "bg-emerald-100 text-emerald-800"
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                  <ChevronRight
+                    className={`w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5 ${
+                      isActive ? "text-white/80" : "text-slate-300"
+                    }`}
+                  />
+                </Link>
+              );
+            })}
+          </div>
         </nav>
 
         {/* Footer Sidebar: Card akun (HIJAU) dengan ikon hiasan */}

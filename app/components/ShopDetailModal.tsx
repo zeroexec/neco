@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   X,
@@ -80,6 +80,9 @@ const DAY_NAMES: Record<number, string> = {
   5: "Jumat",
   6: "Sabtu",
 };
+
+// Jarak geser (px) yang dianggap cukup untuk menutup sheet di mobile
+const DRAG_CLOSE_THRESHOLD = 110;
 
 const toHHmm = (time: string) => time.slice(0, 5);
 
@@ -202,6 +205,11 @@ export default function ShopDetailModal({
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
 
+  // Geser-untuk-tutup (khusus mobile, lewat handle di atas sheet)
+  const [dragY, setDragY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartY = useRef<number | null>(null);
+
   // Ambil detail toko + jam operasional saat modal dibuka
   useEffect(() => {
     if (!isOpen || !shopId) return;
@@ -244,6 +252,13 @@ export default function ShopDetailModal({
     };
   }, [isOpen, shopId]);
 
+  // Reset posisi geser setiap modal dibuka/ditutup
+  useEffect(() => {
+    setDragY(0);
+    setIsDragging(false);
+    dragStartY.current = null;
+  }, [isOpen]);
+
   // Tutup dengan tombol Escape
   useEffect(() => {
     if (!isOpen) return;
@@ -265,6 +280,28 @@ export default function ShopDetailModal({
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    dragStartY.current = e.touches[0].clientY;
+    setIsDragging(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (dragStartY.current === null) return;
+    const delta = e.touches[0].clientY - dragStartY.current;
+    setDragY(delta > 0 ? delta : 0); // hanya boleh digeser ke bawah
+  };
+
+  const handleTouchEnd = () => {
+    const shouldClose = dragY > DRAG_CLOSE_THRESHOLD;
+    dragStartY.current = null;
+    setIsDragging(false);
+    if (shouldClose) {
+      onClose();
+    } else {
+      setDragY(0);
+    }
+  };
 
   const waHref = shop?.whatsapp_number ? toWhatsAppHref(shop.whatsapp_number) : null;
 
@@ -302,32 +339,64 @@ export default function ShopDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-6"
+      className="shop-modal-backdrop fixed inset-0 z-50 bg-black/60 flex items-end md:items-center justify-center md:p-6"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Detail toko"
     >
+      {/* Animasi: naik dari bawah di mobile, membesar halus di desktop */}
+      <style>{`
+        @keyframes shopModalFade { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes shopSheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+        @keyframes shopModalPop { from { opacity: 0; transform: scale(.96) } to { opacity: 1; transform: scale(1) } }
+        .shop-modal-backdrop { animation: shopModalFade .2s ease-out; }
+        .shop-modal-sheet { animation: shopSheetUp .28s cubic-bezier(.32,.72,0,1); }
+        @media (min-width: 768px) {
+          .shop-modal-sheet { animation: shopModalPop .2s ease-out; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .shop-modal-backdrop, .shop-modal-sheet { animation: none; }
+        }
+      `}</style>
+
       <div
-        className="bg-white rounded-3xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden shadow-2xl"
+        className="shop-modal-sheet relative bg-white w-full md:max-w-lg max-h-[92vh] max-h-[92dvh] md:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl rounded-t-3xl md:rounded-3xl"
+        style={{
+          transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
+          transition: isDragging ? "none" : "transform 0.2s ease-out",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Handle geser (hanya mobile): area sentuh luas, pil putih terlihat di atas sepanduk */}
+        <div
+          className="md:hidden absolute top-0 inset-x-0 z-30 h-8 flex items-start justify-center pt-2.5 cursor-grab"
+          style={{ touchAction: "none" }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
+          aria-hidden="true"
+        >
+          <span className="w-10 h-1.5 rounded-full bg-white/90 shadow" />
+        </div>
+
         {/* Satu area scroll: sepanduk, logo, dan isi ikut bergulir bersama */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           {/* Tombol tutup: menempel di atas area scroll, selalu terlihat */}
           <div className="sticky top-0 z-20 h-0">
             <button
               type="button"
               onClick={onClose}
               aria-label="Tutup"
-              className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-600 hover:text-slate-900 shadow-md flex items-center justify-center transition-colors cursor-pointer"
+              className="absolute top-3 right-3 w-10 h-10 md:w-9 md:h-9 rounded-full bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-600 hover:text-slate-900 shadow-md flex items-center justify-center transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Sepanduk (cover) — ikut scroll, tidak fixed */}
-          <div className="relative w-full h-40 sm:h-52 bg-emerald-50">
+          <div className="relative w-full h-36 sm:h-48 md:h-52 bg-emerald-50">
             {shop?.cover_url ? (
               <img
                 src={shop.cover_url}
@@ -356,7 +425,7 @@ export default function ShopDetailModal({
               </p>
             </div>
           ) : (
-            <div className="px-5 pb-6">
+            <div className="px-4 sm:px-5 pb-6">
               {/* Logo menimpa sepanduk + status */}
               <div className="relative -mt-10 flex items-end justify-between gap-3">
                 <div className="w-20 h-20 rounded-2xl bg-emerald-50 text-emerald-700 font-extrabold text-xl border-4 border-white shadow-md shrink-0 flex items-center justify-center overflow-hidden">
@@ -392,31 +461,31 @@ export default function ShopDetailModal({
                 <h2 className="font-extrabold text-xl text-slate-900 leading-tight break-words">
                   {shop.name}
                 </h2>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                   <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[11px] font-bold">
                     {shop.category}
                   </span>
-                  <span className="inline-flex items-center gap-1 text-xs text-slate-500 min-w-0">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{shop.location}</span>
+                  <span className="inline-flex items-start gap-1 text-xs text-slate-500 min-w-0">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-px" />
+                    <span className="break-words">{shop.location}</span>
                   </span>
                 </div>
               </div>
 
               {/* Ringkasan cepat */}
               <div className="mt-5 grid grid-cols-2 gap-2.5">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-3.5 min-w-0">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    <Clock className="w-3 h-3" />
+                    <Clock className="w-3 h-3 shrink-0" />
                     Hari ini
                   </p>
                   <p className="mt-1.5 text-sm font-extrabold text-slate-900 leading-tight break-words">
                     {renderHours(todayDow)}
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-3.5 min-w-0">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    <Wallet className="w-3 h-3" />
+                    <Wallet className="w-3 h-3 shrink-0" />
                     Min. pesanan
                   </p>
                   <p className="mt-1.5 text-sm font-extrabold text-slate-900 leading-tight break-words">
@@ -463,7 +532,7 @@ export default function ShopDetailModal({
                         href={mapsHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 text-xs font-semibold transition-colors"
+                        className="mt-3 w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 sm:py-2 rounded-xl border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 text-xs font-semibold transition-colors"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                         Buka di Google Maps
@@ -506,7 +575,7 @@ export default function ShopDetailModal({
                       return (
                         <div
                           key={dow}
-                          className={`flex items-center justify-between gap-3 pl-3.5 pr-4 py-2.5 text-xs border-l-4 ${
+                          className={`flex items-center justify-between gap-3 pl-3 sm:pl-3.5 pr-3.5 sm:pr-4 py-3 sm:py-2.5 text-xs border-l-4 ${
                             isToday
                               ? "bg-emerald-50 border-emerald-500"
                               : "bg-white border-transparent"
@@ -555,7 +624,7 @@ export default function ShopDetailModal({
                             href={s.url as string}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-3 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 p-3 transition-colors group"
+                            className="flex items-center gap-3 rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 active:bg-emerald-50 p-3 min-h-[56px] transition-colors group"
                           >
                             <span className="w-9 h-9 rounded-xl bg-slate-100 group-hover:bg-white text-slate-500 group-hover:text-emerald-600 flex items-center justify-center shrink-0 transition-colors">
                               <Icon className="w-4 h-4" />
@@ -575,15 +644,15 @@ export default function ShopDetailModal({
           )}
         </div>
 
-        {/* Aksi: bagian dari layout (bukan menimpa isi), isi di atasnya tetap bisa di-scroll penuh */}
+        {/* Aksi: bagian dari layout (bukan menimpa isi). Padding bawah mengikuti safe area iPhone */}
         {showFooter && (
-          <div className="shrink-0 flex items-center gap-2.5 px-4 py-3.5 border-t border-slate-100 bg-white">
+          <div className="shrink-0 flex items-center gap-2.5 px-4 pt-3 pb-[calc(0.875rem+env(safe-area-inset-bottom))] md:pb-3.5 border-t border-slate-100 bg-white">
             {waHref && (
               <a
                 href={waHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 font-semibold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0"
+                className="flex-1 min-h-[48px] md:min-h-0 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 font-semibold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0"
               >
                 <Phone className="w-4 h-4 shrink-0" />
                 <span className="truncate">WhatsApp</span>
@@ -593,7 +662,7 @@ export default function ShopDetailModal({
               <button
                 type="button"
                 onClick={onOpenMenu}
-                className="flex-[1.4] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0 cursor-pointer"
+                className="flex-[1.4] min-h-[48px] md:min-h-0 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors min-w-0 cursor-pointer"
               >
                 <UtensilsCrossed className="w-4 h-4 shrink-0" />
                 <span className="truncate">Menu &amp; Pesan</span>
