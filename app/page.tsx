@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import Header from "./components/Header";
 import ShopMenuModal from "./components/ShopMenuModal";
@@ -12,6 +13,9 @@ import {
   UtensilsCrossed,
   Clock,
   Loader2,
+  Heart,
+  LogIn,
+  X,
 } from "lucide-react";
 
 // Jam operasional per hari (tabel shop_operating_hours)
@@ -35,6 +39,13 @@ interface ShopItem {
   address_detail: string | null;
   created_at: string;
   shop_operating_hours: OperatingHour[] | null;
+}
+
+// Pemberitahuan berupa modal custom (tanpa alert bawaan browser)
+interface NoticeState {
+  title: string;
+  message: string;
+  showLogin?: boolean;
 }
 
 // ---------- Helper: waktu & status buka ----------
@@ -142,6 +153,13 @@ export default function NecoMobileDirectory() {
   // Toko yang sedang dilihat detailnya di modal
   const [detailShop, setDetailShop] = useState<ShopItem | null>(null);
 
+  // Favorit: kumpulan id toko yang difavoritkan pengguna
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  // Id toko yang sedang diproses (cegah klik ganda)
+  const [pendingFavIds, setPendingFavIds] = useState<Set<string>>(new Set());
+  // Modal pemberitahuan (belum login / gagal simpan)
+  const [notice, setNotice] = useState<NoticeState | null>(null);
+
   // Waktu sekarang (WIB), diperbarui tiap menit untuk status Buka/Tutup
   const [now, setNow] = useState(getJakartaNow());
 
@@ -232,6 +250,93 @@ export default function NecoMobileDirectory() {
     fetchShops();
   }, []);
 
+  // 3. Fetch daftar favorit milik pengguna (tabel shop_favorites)
+  const userId = userProfile?.id ?? null;
+
+  const fetchFavorites = useCallback(async () => {
+    if (!userId) {
+      setFavoriteIds(new Set());
+      return;
+    }
+    const { data, error } = await supabase
+      .from("shop_favorites")
+      .select("shop_id")
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Gagal mengambil favorit:", error.message);
+      return;
+    }
+    setFavoriteIds(new Set((data ?? []).map((r) => r.shop_id as string)));
+  }, [userId]);
+
+  useEffect(() => {
+    fetchFavorites();
+  }, [fetchFavorites]);
+
+  // Sinkron saat favorit dihapus lewat modal Toko Favorit di sidebar
+  useEffect(() => {
+    const onChanged = () => fetchFavorites();
+    window.addEventListener("neco:favorites-changed", onChanged);
+    return () =>
+      window.removeEventListener("neco:favorites-changed", onChanged);
+  }, [fetchFavorites]);
+
+  // Tambah / hapus favorit (optimistic update)
+  const toggleFavorite = async (shop: ShopItem) => {
+    if (!userId) {
+      setNotice({
+        title: "Masuk untuk menyimpan favorit",
+        message:
+          "Toko favorit tersimpan di akunmu. Silakan masuk terlebih dahulu.",
+        showLogin: true,
+      });
+      return;
+    }
+    if (pendingFavIds.has(shop.id)) return;
+
+    const wasFavorite = favoriteIds.has(shop.id);
+
+    setPendingFavIds((prev) => new Set(prev).add(shop.id));
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorite) next.delete(shop.id);
+      else next.add(shop.id);
+      return next;
+    });
+
+    const { error } = wasFavorite
+      ? await supabase
+          .from("shop_favorites")
+          .delete()
+          .eq("user_id", userId)
+          .eq("shop_id", shop.id)
+      : await supabase
+          .from("shop_favorites")
+          .insert({ user_id: userId, shop_id: shop.id });
+
+    if (error) {
+      console.error("Gagal memperbarui favorit:", error.message);
+      // Kembalikan ke kondisi semula
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorite) next.add(shop.id);
+        else next.delete(shop.id);
+        return next;
+      });
+      setNotice({
+        title: "Gagal memperbarui favorit",
+        message: "Terjadi kesalahan saat menyimpan. Coba lagi nanti.",
+      });
+    }
+
+    setPendingFavIds((prev) => {
+      const next = new Set(prev);
+      next.delete(shop.id);
+      return next;
+    });
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUserProfile(null);
@@ -267,15 +372,14 @@ export default function NecoMobileDirectory() {
     <div className="w-full min-h-screen bg-slate-50 text-slate-800 pb-12 font-sans relative">
       {/* Header (komponen terpisah): baris atas menempel; pencarian naik dan
           sejajar dengan baris atas saat di-scroll; teks sambutan tergulung hilang */}
-<Header
-  userProfile={userProfile}
-  onOpenMenu={() => setIsMenuOpen(true)}
-  onLogout={handleLogout}
-  searchInput={searchInput}
-  onSearchInputChange={setSearchInput}
-  onSearch={handleSearch}
-
-/>
+      <Header
+        userProfile={userProfile}
+        onOpenMenu={() => setIsMenuOpen(true)}
+        onLogout={handleLogout}
+        searchInput={searchInput}
+        onSearchInputChange={setSearchInput}
+        onSearch={handleSearch}
+      />
       {/* Categories Bar (dari kolom shops.category).
           top-14 = tinggi baris atas di Header (56px). Ubah jika tinggi itu diubah. */}
       <div className="sticky top-14 z-20 bg-white border-b border-slate-200 shadow-xs w-full">
@@ -340,6 +444,8 @@ export default function NecoMobileDirectory() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredShops.map((shop) => {
               const status = getShopStatus(shop, now);
+              const isFavorite = favoriteIds.has(shop.id);
+              const isFavPending = pendingFavIds.has(shop.id);
 
               return (
                 <div
@@ -361,6 +467,28 @@ export default function NecoMobileDirectory() {
                         </div>
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+
+                      {/* Tombol hati (favorit) */}
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(shop)}
+                        disabled={isFavPending}
+                        aria-pressed={isFavorite}
+                        aria-label={
+                          isFavorite
+                            ? `Hapus ${shop.name} dari favorit`
+                            : `Tambahkan ${shop.name} ke favorit`
+                        }
+                        className="absolute top-2.5 right-3 w-8 h-8 rounded-full bg-white/90 hover:bg-white shadow-xs flex items-center justify-center transition-all active:scale-90 disabled:opacity-70 cursor-pointer"
+                      >
+                        <Heart
+                          className={`w-4 h-4 transition-colors ${
+                            isFavorite
+                              ? "fill-rose-500 text-rose-500"
+                              : "text-slate-500"
+                          }`}
+                        />
+                      </button>
 
                       <div className="absolute bottom-2.5 left-3 flex items-center gap-1 text-[10px] sm:text-xs font-semibold bg-white px-2.5 py-1 rounded-md shadow-xs">
                         <Clock className="w-3 h-3 text-slate-500" />
@@ -472,6 +600,62 @@ export default function NecoMobileDirectory() {
         shopName={menuShop?.name ?? ""}
         canOrder={menuShop ? getShopStatus(menuShop, now).isOpenNow : false}
       />
+
+      {/* Modal Pemberitahuan (belum login / gagal simpan favorit) */}
+      {notice && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={() => setNotice(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={notice.title}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="p-2 bg-rose-50 text-rose-500 rounded-xl shrink-0">
+                <Heart className="w-5 h-5" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotice(null)}
+                aria-label="Tutup"
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <h3 className="mt-3 font-bold text-base text-slate-900">
+              {notice.title}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+              {notice.message}
+            </p>
+
+            <div className="mt-5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setNotice(null)}
+                className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                {notice.showLogin ? "Nanti Saja" : "Tutup"}
+              </button>
+              {notice.showLogin && (
+                <Link
+                  href="/auth/login"
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Masuk
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

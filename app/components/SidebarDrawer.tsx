@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import FavoriteShopsModal from "./FavoriteShopsModal";
 import {
   Store,
   Sparkles,
@@ -35,10 +36,12 @@ interface SidebarDrawerProps {
   onLogout: () => void;
 }
 
+// Item navigasi: berisi href (pindah halaman) ATAU action (buka modal)
 interface NavItem {
   label: string;
-  href: string;
   Icon: LucideIcon;
+  href?: string;
+  action?: "favorites";
 }
 
 // Ubah href di sini jika nama route di project kamu berbeda
@@ -46,7 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Beranda", href: "/", Icon: Home },
   { label: "Toko Saya", href: "/mystore", Icon: Store },
   { label: "Daftar Pesanan", href: "/orders", Icon: ClipboardList },
-  { label: "Toko Favorit", href: "/favorites", Icon: Heart },
+  { label: "Toko Favorit", action: "favorites", Icon: Heart },
   { label: "Dashboard Karyawan", href: "/employee", Icon: BadgeCheck },
   { label: "Profil", href: "/profile", Icon: User },
   { label: "Pengaturan", href: "/settings", Icon: Settings },
@@ -60,6 +63,7 @@ export default function SidebarDrawer({
   onLogout,
 }: SidebarDrawerProps) {
   const pathname = usePathname();
+  const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -118,6 +122,31 @@ export default function SidebarDrawer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
+  // Tutup sidebar, lalu buka modal toko favorit
+  const openFavorites = () => {
+    onClose();
+    setIsFavoritesOpen(true);
+  };
+
+  const itemClass = (active: boolean) =>
+    `group relative w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm text-left transition-all ${
+      active
+        ? "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/25"
+        : "bg-slate-50 text-slate-800 font-semibold hover:bg-emerald-50 hover:text-emerald-700"
+    }`;
+
+  const iconWrapClass = (active: boolean) =>
+    `flex items-center justify-center w-9 h-9 rounded-xl transition-colors ${
+      active
+        ? "bg-white/20 text-white"
+        : "bg-white text-slate-500 shadow-xs group-hover:text-emerald-600"
+    }`;
+
+  const chevronClass = (active: boolean) =>
+    `w-4 h-4 transition-transform group-hover:translate-x-0.5 ${
+      active ? "text-white/80" : "text-slate-300"
+    }`;
+
   return (
     <>
       {/* Overlay - Tanpa Blur */}
@@ -166,35 +195,39 @@ export default function SidebarDrawer({
             Menu Navigasi
           </p>
           <div className="space-y-2">
-            {NAV_ITEMS.map(({ label, href, Icon }) => {
-              const active = isActive(href);
+            {NAV_ITEMS.map(({ label, href, action, Icon }) => {
+              // Item berupa aksi (modal): tombol, bukan link
+              if (action === "favorites") {
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={openFavorites}
+                    className={`${itemClass(false)} cursor-pointer`}
+                  >
+                    <span className={iconWrapClass(false)}>
+                      <Icon className="w-5 h-5" />
+                    </span>
+                    <span className="flex-1">{label}</span>
+                    <ChevronRight className={chevronClass(false)} />
+                  </button>
+                );
+              }
+
+              const active = href ? isActive(href) : false;
               return (
                 <Link
                   key={href}
-                  href={href}
+                  href={href ?? "/"}
                   onClick={onClose}
                   aria-current={active ? "page" : undefined}
-                  className={`group relative w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm transition-all ${
-                    active
-                      ? "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/25"
-                      : "bg-slate-50 text-slate-800 font-semibold hover:bg-emerald-50 hover:text-emerald-700"
-                  }`}
+                  className={itemClass(active)}
                 >
-                  <span
-                    className={`flex items-center justify-center w-9 h-9 rounded-xl transition-colors ${
-                      active
-                        ? "bg-white/20 text-white"
-                        : "bg-white text-slate-500 shadow-xs group-hover:text-emerald-600"
-                    }`}
-                  >
+                  <span className={iconWrapClass(active)}>
                     <Icon className="w-5 h-5" />
                   </span>
                   <span className="flex-1">{label}</span>
-                  <ChevronRight
-                    className={`w-4 h-4 transition-transform group-hover:translate-x-0.5 ${
-                      active ? "text-white/80" : "text-slate-300"
-                    }`}
-                  />
+                  <ChevronRight className={chevronClass(active)} />
                 </Link>
               );
             })}
@@ -258,6 +291,14 @@ export default function SidebarDrawer({
           )}
         </div>
       </aside>
+
+      {/* Modal Toko Favorit: sengaja di luar <aside> (aside punya transform,
+          yang akan merusak posisi elemen fixed di dalamnya) */}
+      <FavoriteShopsModal
+        isOpen={isFavoritesOpen}
+        onClose={() => setIsFavoritesOpen(false)}
+        userId={userProfile?.id ?? null}
+      />
     </>
   );
 }
