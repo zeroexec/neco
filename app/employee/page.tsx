@@ -16,6 +16,9 @@ import {
   X,
 } from "lucide-react";
 
+// Gradasi yang sama dengan header beranda
+const GRADIENT = "bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-500";
+
 type EmployeeStatus = "pending" | "active" | "inactive";
 
 interface Membership {
@@ -222,41 +225,66 @@ export default function EmployeeEntryPage() {
         </div>
       )}
 
-      <div className="max-w-2xl mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
-        {/* Header */}
-        <div className="space-y-3">
+      {/* Baris atas (menempel): tombol kembali + logo + brand */}
+      <div className={`sticky top-0 z-40 h-14 w-full ${GRADIENT}`}>
+        <div className="max-w-2xl mx-auto h-full px-4 sm:px-6 flex items-center gap-2 sm:gap-3">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
+            aria-label="Kembali ke Beranda"
+            className="p-2 -ml-2 text-white hover:bg-emerald-800/40 active:bg-emerald-800/60 rounded-xl transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Kembali ke Beranda</span>
+            <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
           </Link>
 
-          <div>
-            <h1 className="text-lg sm:text-xl font-extrabold text-slate-900">
-              Dashboard Karyawan
-            </h1>
-            <p className="text-xs text-slate-500">
-              Gabung ke toko dengan kode dari pemilik, lalu masuk ke dashboard toko Anda
-            </p>
-          </div>
+          <Link href="/" className="flex items-center gap-2" aria-label="Ke beranda">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg overflow-hidden">
+              <img
+                src="/logo.png"
+                alt=""
+                className="w-full h-full object-contain scale-100"
+              />
+            </div>
+            <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white">
+              NECO<span className="text-emerald-200">.</span>
+            </span>
+          </Link>
         </div>
+      </div>
 
+      {/* Hero: judul halaman */}
+      <div className={`w-full ${GRADIENT}`}>
+        <div className="max-w-2xl mx-auto text-center px-4 sm:px-6 pt-2 sm:pt-4 pb-12 sm:pb-14">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-tight">
+            Dashboard Karyawan
+          </h1>
+          <p className="mt-1.5 sm:mt-2 text-sm sm:text-base text-emerald-50">
+            Gabung ke toko dengan kode dari pemilik, lalu masuk ke dashboard toko Anda
+          </p>
+        </div>
+      </div>
+
+      {/* Konten: kartu pertama sedikit menumpuk ke area hijau */}
+      <div className="relative z-10 max-w-2xl mx-auto px-4 sm:px-6 -mt-6 pb-10 space-y-5 sm:space-y-6">
         {/* Belum login */}
         {!isLoading && !userId ? (
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-6 text-center space-y-1">
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md shadow-emerald-900/5 p-6 text-center space-y-1">
             <p className="text-sm font-bold text-slate-800">Anda belum masuk</p>
             <p className="text-xs text-slate-500">
               Masuk ke akun Anda terlebih dahulu untuk bergabung sebagai karyawan.
             </p>
+            <Link
+              href="/auth/login"
+              className="mt-3 inline-flex items-center justify-center px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors"
+            >
+              Masuk ke Akun
+            </Link>
           </div>
         ) : (
           <>
             {/* Form gabung */}
             <form
               onSubmit={handleJoin}
-              className="bg-white rounded-2xl border border-slate-200/80 p-4 sm:p-5 space-y-3"
+              className="bg-white rounded-2xl border border-slate-200/80 shadow-md shadow-emerald-900/5 p-4 sm:p-5 space-y-3"
             >
               <div className="flex items-start gap-3">
                 <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">

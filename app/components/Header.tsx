@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Search, Store, Sparkles, Menu, LogOut, LogIn } from "lucide-react";
+import { Search, Store, Menu, LogOut, LogIn } from "lucide-react";
 import type { UserProfile } from "./SidebarDrawer";
 
 // Gradasi horizontal: sama persis di setiap ketinggian, sehingga bagian yang
@@ -22,7 +22,7 @@ interface HeaderProps {
   onSearch: () => void;
 }
 
-// ---------- Sub-komponen: tombol menu + brand ----------
+// ---------- Sub-komponen: tombol menu + logo + brand ----------
 
 function LeftCluster({
   compact,
@@ -42,10 +42,16 @@ function LeftCluster({
       </button>
 
       <div className="flex items-center gap-2">
-        <div className="p-1.5 sm:p-2 bg-white rounded-xl text-emerald-600">
-          <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
+        {/* Logo: gambar langsung, bingkai transparan (tanpa kotak putih) */}
+        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg overflow-hidden">
+          <img
+            src="/logo.png"
+            alt="NECO"
+            className="w-full h-full object-contain scale-100"
+          />
         </div>
-        {/* Saat sejajar dengan pencarian, teks brand disembunyikan di layar kecil */}
+
+        {/* Teks brand. Saat sejajar dengan pencarian, disembunyikan di layar kecil */}
         <span
           className={`font-extrabold text-lg sm:text-xl tracking-tight text-white ${
             compact ? "hidden sm:inline" : ""
@@ -194,7 +200,7 @@ export default function Header({
 
   return (
     <>
-      {/* 1. Baris atas (menempel): menu, brand, akun.
+      {/* 1. Baris atas (menempel): menu, logo, akun.
           z-40 agar dropdown profil tampil di atas bar kategori */}
       <div className={`sticky top-0 z-40 h-14 w-full ${GRADIENT}`}>
         <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-3">

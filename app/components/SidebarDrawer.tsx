@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import FavoriteShopsModal from "./FavoriteShopsModal";
 import {
   Store,
-  Sparkles,
   X,
   Home,
   User,
@@ -170,13 +169,19 @@ export default function SidebarDrawer({
           <Link
             href="/"
             onClick={onClose}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2.5"
             aria-label="Ke beranda"
           >
-            <div className="p-1.5 bg-emerald-600 rounded-lg text-white">
-              <Sparkles className="w-4 h-4" />
+            {/* Logo: gambar di dalam bingkai hijau (latar sidebar putih,
+                sedangkan logo berwarna putih sehingga perlu latar berwarna) */}
+            <div className="w-9 h-9 rounded-lg bg-emerald-600 overflow-hidden shadow-sm shadow-emerald-600/20">
+              <img
+                src="/logo.png"
+                alt=""
+                className="w-full h-full object-contain scale-100"
+              />
             </div>
-            <span className="font-extrabold text-base text-slate-900">
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">
               NECO<span className="text-emerald-600">.</span>
             </span>
           </Link>
