@@ -2,7 +2,13 @@
 
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Loader2, Infinity as InfinityIcon, Minus, Plus, Trash2 } from "lucide-react";
-import { formatRp, hasStockLimit, isSoldOutProduct, type Product } from "./utils";
+import {
+  formatRp,
+  hasStockLimit,
+  isSoldOutProduct,
+  GREEN_BTN,
+  type Product,
+} from "./utils";
 import { useDebouncedValue } from "./useDebouncedValue";
 import { useKeyboardInset } from "./useKeyboardInset";
 
@@ -74,7 +80,7 @@ const ProductCard = memo(function ProductCard({
     // content-visibility: kartu di luar layar tidak dihitung layout/paint-nya (grid besar tetap ringan).
     // Penanda "di keranjang" memakai border + ring inset agar tidak terpotong containment.
     <div
-      className={`bg-white border rounded-2xl p-2.5 flex flex-col gap-1.5 select-none [content-visibility:auto] [contain-intrinsic-size:auto_180px] ${
+      className={`bg-white border rounded-2xl p-2.5 flex flex-col gap-2 select-none [content-visibility:auto] [contain-intrinsic-size:auto_230px] ${
         isBlocked ? "opacity-50 bg-slate-50" : isSoldOut ? "opacity-80" : ""
       } ${
         inCart
@@ -83,31 +89,38 @@ const ProductCard = memo(function ProductCard({
       }`}
     >
       {/* Gambar */}
-      <div className="w-full h-14 sm:h-16 bg-emerald-50/70 rounded-xl flex items-center justify-center overflow-hidden">
+      <div className="w-full h-16 sm:h-20 bg-emerald-50/70 rounded-xl flex items-center justify-center overflow-hidden shrink-0">
         <ProductImage product={product} />
       </div>
 
-      {/* Info padat: kategori + SKU, nama, harga + stok */}
-      <div className="min-w-0 space-y-0.5">
+      {/* Info: kategori + SKU, nama, harga, lalu stok di bawah harga */}
+      <div className="min-w-0 flex-1 flex flex-col gap-1">
         <div className="flex items-center justify-between gap-2 leading-none">
-          <span className="text-[9px] font-semibold text-slate-400 truncate">
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 truncate">
             {product.category || "Umum"}
           </span>
           {product.sku && (
-            <span className="text-[9px] font-mono text-slate-400 shrink-0">{product.sku}</span>
+            <span className="text-[9px] font-mono text-slate-400 shrink-0 max-w-[45%] truncate">
+              {product.sku}
+            </span>
           )}
         </div>
+
+        {/* Tinggi nama dikunci 2 baris agar harga & tombol selalu sejajar antar kartu */}
         <h3
           title={product.name}
-          className="text-[13px] font-bold text-slate-800 leading-tight line-clamp-1"
+          className="text-[13px] font-bold text-slate-800 leading-tight line-clamp-2 min-h-[2.1rem]"
         >
           {product.name}
         </h3>
-        <div className="flex items-center justify-between gap-2 leading-none pt-0.5">
-          <span className="text-[11px] font-extrabold text-emerald-600">
+
+        <div className="mt-auto space-y-0.5">
+          <p className="text-sm font-extrabold text-emerald-600 leading-none tabular-nums">
             {formatRp(Number(product.price))}
-          </span>
-          <span className={`text-[9px] font-semibold flex items-center gap-0.5 ${statusColor}`}>
+          </p>
+          <p
+            className={`text-[10px] font-semibold flex items-center gap-1 leading-none pt-0.5 ${statusColor}`}
+          >
             {isSoldOut ? (
               "Habis"
             ) : isInactive ? (
@@ -121,13 +134,13 @@ const ProductCard = memo(function ProductCard({
             ) : (
               "Tersedia"
             )}
-          </span>
+          </p>
         </div>
       </div>
 
       {/* Aksi: tombol "Pilih" berubah jadi - qty + (tinggi tetap, tidak menggeser kartu lain) */}
       {inCart ? (
-        <div className="flex items-center gap-1 h-9">
+        <div className="flex items-center gap-1 h-9 shrink-0">
           <button
             type="button"
             onClick={() => onUpdateQuantity(product.id, -1)}
@@ -154,7 +167,7 @@ const ProductCard = memo(function ProductCard({
             type="button"
             onClick={() => onUpdateQuantity(product.id, 1)}
             aria-label={`Tambah ${product.name}`}
-            className="w-9 h-9 shrink-0 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-700 text-white flex items-center justify-center active:scale-95 focus-visible:outline-2 focus-visible:outline-emerald-600"
+            className={`w-9 h-9 shrink-0 rounded-lg ${GREEN_BTN} flex items-center justify-center focus-visible:outline-2 focus-visible:outline-emerald-600`}
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -164,12 +177,12 @@ const ProductCard = memo(function ProductCard({
           type="button"
           disabled={isBlocked}
           onClick={() => onAdd(product)}
-          className={`h-9 w-full rounded-lg text-[11px] font-bold active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-emerald-600 ${
+          className={`h-9 w-full shrink-0 rounded-lg text-[11px] font-bold focus-visible:outline-2 focus-visible:outline-emerald-600 ${
             isBlocked
               ? "bg-slate-200 text-slate-400 cursor-not-allowed"
               : isSoldOut
-              ? "bg-amber-50 text-amber-700 hover:bg-amber-100 active:bg-amber-100"
-              : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-700"
+              ? "bg-amber-50 text-amber-700 hover:bg-amber-100 active:bg-amber-100 active:scale-[0.98]"
+              : GREEN_BTN
           }`}
         >
           {isBlocked ? "Nonaktif" : isSoldOut ? "Tambah stok" : "Pilih"}
@@ -295,7 +308,7 @@ const SearchBox = memo(function SearchBox({
         type="button"
         onClick={() => run(text)}
         aria-label="Cari"
-        className="absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-700 text-white flex items-center justify-center active:scale-95 focus-visible:outline-2 focus-visible:outline-emerald-700"
+        className={`absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 rounded-xl ${GREEN_BTN} flex items-center justify-center focus-visible:outline-2 focus-visible:outline-emerald-700`}
       >
         <Search className="w-4 h-4" />
       </button>
@@ -384,14 +397,14 @@ function ProductCatalog({
       )}
 
       {/* Kategori */}
-      <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain no-scrollbar shrink-0 py-0.5">
+      <div className="flex items-center gap-2 overflow-x-auto overscroll-x-contain no-scrollbar shrink-0 pt-0.5 pb-1.5">
         {categories.map((cat) => (
           <button
             key={cat}
             onClick={() => onSelectCategory(cat)}
             className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${
               selectedCategory === cat
-                ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/25"
+                ? GREEN_BTN
                 : "bg-white text-slate-600 border border-slate-200/80 hover:bg-emerald-50 active:bg-emerald-50 hover:text-emerald-700 active:text-emerald-700"
             }`}
           >

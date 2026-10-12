@@ -12,7 +12,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { Modal } from "./PosModals";
-import { formatRp } from "./utils";
+import { formatRp, GREEN_BTN, GREEN_BTN_DISABLED } from "./utils";
 import { useKeyboardInset } from "./useKeyboardInset";
 
 export interface PanelCartItem {
@@ -87,7 +87,7 @@ function CartFabBase({
       type="button"
       onClick={onClick}
       aria-label={`Buka keranjang, ${count} barang, total ${formatRp(total)}`}
-      className="lg:hidden fixed right-4 bottom-[calc(var(--mobile-nav-h)_+_1rem)] z-30 w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 ring-4 ring-white active:scale-95 transition-transform focus-visible:outline-2 focus-visible:outline-emerald-700"
+      className={`lg:hidden fixed right-4 bottom-[calc(var(--mobile-nav-h)_+_1rem)] z-30 w-14 h-14 rounded-full ${GREEN_BTN} flex items-center justify-center ring-4 ring-white focus-visible:outline-2 focus-visible:outline-emerald-700`}
     >
       <ShoppingBag className="w-6 h-6" />
       {count > 0 && (
@@ -288,7 +288,7 @@ function CartPanel({
                     <button
                       onClick={() => handleIncrement(item)}
                       aria-label={`Tambah ${item.name}`}
-                      className="w-9 h-9 lg:w-7 lg:h-7 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 flex items-center justify-center"
+                      className={`w-9 h-9 lg:w-7 lg:h-7 rounded-full ${GREEN_BTN} flex items-center justify-center`}
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>
@@ -337,7 +337,7 @@ function CartPanel({
                     onClick={() => setCashGiven(String(amt))}
                     className={`py-2.5 lg:py-2 text-xs lg:text-[11px] font-bold rounded-xl border transition-colors ${
                       cashNumber === amt
-                        ? "bg-emerald-600 text-white border-emerald-600"
+                        ? `${GREEN_BTN} border-emerald-600`
                         : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700"
                     }`}
                   >
@@ -377,7 +377,7 @@ function CartPanel({
           <button
             disabled={!canCheckout}
             onClick={handleCheckout}
-            className="w-full py-3.5 lg:py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold rounded-2xl shadow-md shadow-emerald-600/25 disabled:shadow-none transition-colors flex items-center justify-center gap-2 text-sm lg:text-xs"
+            className={`w-full py-3.5 lg:py-3 ${GREEN_BTN} ${GREEN_BTN_DISABLED} font-extrabold rounded-2xl flex items-center justify-center gap-2 text-sm lg:text-xs`}
           >
             {isSubmitting ? (
               <Loader2 className="w-4 h-4 animate-spin" />

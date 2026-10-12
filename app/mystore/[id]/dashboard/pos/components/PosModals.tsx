@@ -3,7 +3,15 @@
 import React, { memo, useEffect } from "react";
 import { AlertTriangle, CheckCircle2, XCircle, PackagePlus, Loader2 } from "lucide-react";
 import { useKeyboardInset } from "./useKeyboardInset";
-import { formatRp, isSoldOutProduct, type Notice, type Product, type StockPrompt } from "./utils";
+import {
+  formatRp,
+  isSoldOutProduct,
+  GREEN_BTN,
+  GREEN_BTN_DISABLED,
+  type Notice,
+  type Product,
+  type StockPrompt,
+} from "./utils";
 
 /* ---------- Modal dasar (custom, pengganti alert/confirm browser) ---------- */
 
@@ -123,7 +131,7 @@ function StockPromptModalBase({
             <button
               onClick={onSubmit}
               disabled={isSaving}
-              className="flex-1 py-2.5 text-xs font-bold rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white flex items-center justify-center gap-1.5"
+              className={`flex-1 py-2.5 text-xs font-bold rounded-2xl ${GREEN_BTN} ${GREEN_BTN_DISABLED} flex items-center justify-center gap-1.5`}
             >
               {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>{prompt.increment ? "Simpan & Masukkan" : "Simpan Stok"}</span>
@@ -184,7 +192,7 @@ function NoticeModalBase({
           <button
             onClick={onClose}
             autoFocus
-            className="w-full py-2.5 text-xs font-bold rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white"
+            className={`w-full py-2.5 text-xs font-bold rounded-2xl ${GREEN_BTN}`}
           >
             OK
           </button>
