@@ -18,7 +18,8 @@ import { useKeyboardInset } from "./useKeyboardInset";
 export interface PanelCartItem {
   id: string; // products.id (uuid)
   name: string;
-  price: number;
+  price: number; // harga satuan setelah diskon
+  originalPrice: number; // harga satuan sebelum diskon
   quantity: number;
   stock: number | null; // null = tanpa batas stok (products.track_stock = false)
 }
@@ -29,7 +30,8 @@ export type PaymentMethod = "cash";
 /** Data pembayaran yang dikirim ke parent, dipetakan ke kolom tabel `orders` */
 export interface CheckoutPayment {
   paymentMethod: PaymentMethod; // -> orders.payment_method
-  subtotal: number; // -> orders.subtotal
+  subtotal: number; // -> orders.subtotal (sebelum diskon)
+  discountAmount: number; // -> orders.discount
   totalAmount: number; // -> orders.total_amount
   cashGiven: number | null; // -> orders.cash_given (null jika non-tunai)
   changeAmount: number | null; // -> orders.change_amount (null jika non-tunai)
@@ -128,6 +130,8 @@ function CartPanel({
 
   const totalItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const grandTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = cart.reduce((sum, item) => sum + item.originalPrice * item.quantity, 0);
+  const discountTotal = subtotal - grandTotal;
 
   const cashNumber = parseInt(cashGiven, 10) || 0;
   const changeAmount = cashNumber - grandTotal;
@@ -183,7 +187,8 @@ function CartPanel({
 
     onCheckout({
       paymentMethod: "cash",
-      subtotal: grandTotal,
+      subtotal,
+      discountAmount: discountTotal,
       totalAmount: grandTotal,
       cashGiven: cashNumber,
       changeAmount,
@@ -266,6 +271,11 @@ function CartPanel({
                     <h4 className="text-[13px] lg:text-xs font-bold text-slate-800 truncate">{item.name}</h4>
                     <p className="text-xs lg:text-[11px] font-semibold text-emerald-600">
                       {formatRp(item.price * item.quantity)}
+                      {item.originalPrice > item.price && (
+                        <span className="ml-1.5 text-[10px] font-medium text-slate-400 line-through">
+                          {formatRp(item.originalPrice * item.quantity)}
+                        </span>
+                      )}
                     </p>
                     <p
                       className={`text-[10px] font-medium ${
@@ -303,6 +313,19 @@ function CartPanel({
         <div className={`px-4 pt-3 ${
             kbInset > 0 ? "pb-3" : "pb-[calc(0.875rem_+_env(safe-area-inset-bottom))]"
           } lg:pb-3.5 border-t border-slate-100 space-y-2.5 bg-slate-50/60 shrink-0 overflow-y-auto overscroll-contain max-h-[calc(var(--vvh,100dvh)*0.55)] lg:max-h-none`}>
+          {discountTotal > 0 && (
+            <div className="px-1 space-y-1 text-xs">
+              <div className="flex justify-between text-slate-500">
+                <span>Subtotal</span>
+                <span className="tabular-nums">{formatRp(subtotal)}</span>
+              </div>
+              <div className="flex justify-between font-semibold text-rose-600">
+                <span>Diskon</span>
+                <span className="tabular-nums">-{formatRp(discountTotal)}</span>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 px-4 py-3 text-white shadow-md shadow-emerald-600/25">
             <span className="text-xs font-semibold text-emerald-50">Total</span>
             <span className="text-lg font-extrabold">{formatRp(grandTotal)}</span>

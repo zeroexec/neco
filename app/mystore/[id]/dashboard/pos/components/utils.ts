@@ -1,4 +1,6 @@
 // ===== Tipe =====
+export type DiscountType = "percent" | "nominal";
+
 export interface Product {
   id: string;
   shop_id: string;
@@ -12,6 +14,10 @@ export interface Product {
   track_stock?: boolean;
   image_url?: string | null;
   is_available: boolean;
+  // Diskon (kolom di tabel products)
+  discount_type?: DiscountType | null;
+  discount_value?: number | null;
+  discount_ends_at?: string | null; // null = tanpa batas waktu
 }
 
 export interface CartItem extends Product {
@@ -34,6 +40,28 @@ export interface Notice {
 
 // ===== Helper =====
 export const formatRp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
+
+// Diskon dianggap aktif bila tipe & nilainya valid dan belum lewat batas waktu
+export const hasActiveDiscount = (p: Product): boolean => {
+  if (!p.discount_type || !p.discount_value || Number(p.discount_value) <= 0) return false;
+  if (p.discount_ends_at && new Date(p.discount_ends_at).getTime() <= Date.now()) return false;
+  return true;
+};
+
+// Harga satuan setelah diskon (dibulatkan ke rupiah, tidak pernah di bawah 0)
+export const getDiscountedPrice = (p: Product): number => {
+  const price = Number(p.price);
+  if (!hasActiveDiscount(p)) return price;
+  const value = Number(p.discount_value);
+  const result = p.discount_type === "percent" ? price - (price * value) / 100 : price - value;
+  return Math.max(0, Math.round(result));
+};
+
+// Label singkat untuk badge, mis. "-20%" atau "-Rp 5.000"
+export const getDiscountLabel = (p: Product): string =>
+  p.discount_type === "percent"
+    ? `-${Number(p.discount_value)}%`
+    : `-${formatRp(Number(p.discount_value))}`;
 
 // Produk punya batas stok hanya jika stoknya dihitung dan nilainya ada
 export const hasStockLimit = (product: Product): boolean =>

@@ -3,25 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { X, Plus, Trash2, Layers, Loader2, Upload, Package } from "lucide-react";
-
-export interface Product {
-  id: string;
-  shop_id: string;
-  name: string;
-  description?: string | null;
-  price: number;
-  stock: number;
-  category?: string | null;
-  image_url?: string | null;
-  is_available: boolean;
-  created_at?: string;
-  updated_at?: string;
-  sku?: string | null;
-  cost_price?: number | null;
-  unit?: string | null;
-  min_stock?: number | null;
-  track_stock?: boolean;
-}
+import { Product, GREEN_BTN, GREEN_BTN_DISABLED } from "./utils";
 
 interface VariantOption {
   id?: string;
@@ -899,7 +881,7 @@ export default function ProductFormModal({
             <button
               type="submit"
               disabled={isSubmitting || isCompressing}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium text-xs inline-flex items-center gap-2 disabled:opacity-50 transition-colors shadow-sm cursor-pointer"
+              className={`px-5 py-2.5 rounded-xl font-semibold text-xs inline-flex items-center gap-2 cursor-pointer ${GREEN_BTN} ${GREEN_BTN_DISABLED}`}
             >
               {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
               <span>

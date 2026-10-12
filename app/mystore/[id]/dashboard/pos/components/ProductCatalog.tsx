@@ -4,6 +4,9 @@ import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Loader2, Infinity as InfinityIcon, Minus, Plus, Trash2 } from "lucide-react";
 import {
   formatRp,
+  getDiscountedPrice,
+  getDiscountLabel,
+  hasActiveDiscount,
   hasStockLimit,
   isSoldOutProduct,
   GREEN_BTN,
@@ -65,6 +68,7 @@ const ProductCard = memo(function ProductCard({
   const isLowStock =
     limited && !isSoldOut && (product.stock as number) <= (product.min_stock ?? 0);
   const inCart = qtyInCart > 0;
+  const discounted = hasActiveDiscount(product);
 
   const statusColor = isSoldOut
     ? "text-rose-500"
@@ -89,8 +93,13 @@ const ProductCard = memo(function ProductCard({
       }`}
     >
       {/* Gambar */}
-      <div className="w-full h-16 sm:h-20 bg-emerald-50/70 rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+      <div className="relative w-full h-16 sm:h-20 bg-emerald-50/70 rounded-xl flex items-center justify-center overflow-hidden shrink-0">
         <ProductImage product={product} />
+        {discounted && (
+          <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[10px] font-extrabold leading-none shadow-sm">
+            {getDiscountLabel(product)}
+          </span>
+        )}
       </div>
 
       {/* Info: kategori + SKU, nama, harga, lalu stok di bawah harga */}
@@ -115,9 +124,16 @@ const ProductCard = memo(function ProductCard({
         </h3>
 
         <div className="mt-auto space-y-0.5">
-          <p className="text-sm font-extrabold text-emerald-600 leading-none tabular-nums">
-            {formatRp(Number(product.price))}
-          </p>
+          <div className="flex items-baseline gap-1.5 flex-wrap leading-none">
+            <p className="text-sm font-extrabold text-emerald-600 leading-none tabular-nums">
+              {formatRp(getDiscountedPrice(product))}
+            </p>
+            {discounted && (
+              <p className="text-[10px] text-slate-400 line-through leading-none tabular-nums">
+                {formatRp(Number(product.price))}
+              </p>
+            )}
+          </div>
           <p
             className={`text-[10px] font-semibold flex items-center gap-1 leading-none pt-0.5 ${statusColor}`}
           >
@@ -350,7 +366,12 @@ const SearchBox = memo(function SearchBox({
                       </span>
                     )}
                     <span className="text-[10px] font-bold text-emerald-600 mt-0.5">
-                      {formatRp(Number(p.price))}
+                      {hasActiveDiscount(p) && (
+                        <span className="mr-1 font-medium text-slate-400 line-through">
+                          {formatRp(Number(p.price))}
+                        </span>
+                      )}
+                      {formatRp(getDiscountedPrice(p))}
                     </span>
                   </span>
                 </button>

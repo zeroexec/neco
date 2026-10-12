@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase"; // sesuaikan dengan lokasi klien Supabase Anda
 import type { CheckoutPayment, PanelCartItem } from "./CartPanel";
 import {
+  getDiscountedPrice,
   hasStockLimit,
   isSoldOutProduct,
   type Notice,
@@ -51,7 +52,7 @@ export function usePOS(storeId: string) {
     const { data, error } = await supabase
       .from("products")
       .select(
-        "id, shop_id, sku, name, category, price, stock, min_stock, unit, track_stock, image_url, is_available"
+        "id, shop_id, sku, name, category, price, stock, min_stock, unit, track_stock, image_url, is_available, discount_type, discount_value, discount_ends_at"
       )
       .eq("shop_id", storeId)
       .order("name", { ascending: true });
@@ -108,7 +109,8 @@ export function usePOS(storeId: string) {
       items.push({
         id,
         name: p.name,
-        price: Number(p.price),
+        price: getDiscountedPrice(p), // harga satuan setelah diskon
+        originalPrice: Number(p.price),
         quantity,
         stock: hasStockLimit(p) ? (p.stock as number) : null,
       });
@@ -263,8 +265,8 @@ export function usePOS(storeId: string) {
             status: "completed",
             payment_status: "paid",
             payment_method: payment.paymentMethod,
-            subtotal: payment.subtotal,
-            discount: 0,
+            subtotal: payment.subtotal, // sebelum diskon
+            discount: payment.discountAmount,
             total_amount: payment.totalAmount,
             cash_given: payment.cashGiven,
             change_amount: payment.changeAmount,
