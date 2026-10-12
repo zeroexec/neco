@@ -1,146 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useRef, use } from "react";
-import Link from "next/link";
+import React, { useState, useEffect, useCallback, use } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Store,
-  LayoutDashboard,
-  ShoppingBag,
-  Package,
-  Settings,
-  Calculator,
-  Users,
-  Loader2,
-  Menu,
-  X,
-  CheckCircle2,
-  AlertCircle,
-  ShieldAlert,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
-
-interface ShopDetail {
-  id: string;
-  owner_id: string;
-  name: string;
-  category: string;
-  location: string;
-  address_detail: string | null;
-  avatar_url: string | null;
-  is_open: boolean;
-}
-
-interface OperatingHour {
-  day_of_week: number; // 0 = Minggu, 1 = Senin, ... 6 = Sabtu (sama dengan Date.getDay())
-  open_time: string | null; // "HH:MM:SS"
-  close_time: string | null;
-  is_closed: boolean;
-}
-
-interface NavItem {
-  key: string; // dicocokkan dengan shop_employees.allowed_menus
-  label: string;
-  href: string;
-  icon: LucideIcon;
-  exact?: boolean;
-  badge?: string;
-  ownerOnly?: boolean; // menu khusus pemilik toko
-}
-
-interface UserInfo {
-  name: string;
-  email: string | null;
-  avatar: string | null;
-}
-
-type AccessState =
-  | "loading"
-  | "owner"
-  | "employee"
-  | "unauthenticated"
-  | "notfound"
-  | "denied"
-  | "error";
-
-// Status pesanan yang dianggap "perlu diproses" (sesuaikan dengan nilai di orders.status)
-const PENDING_STATUSES = ["pending"];
-
-// ===== Helper: cek apakah toko seharusnya buka sekarang =====
-const toMinutes = (t: string | null): number | null => {
-  if (!t) return null;
-  const [h, m] = t.split(":");
-  return Number(h) * 60 + Number(m);
-};
-
-const isOpenNow = (hours: OperatingHour[], now: Date): boolean => {
-  const day = now.getDay();
-  const prevDay = (day + 6) % 7;
-  const cur = now.getHours() * 60 + now.getMinutes();
-
-  // Jam buka yang melewati tengah malam dari hari kemarin (mis. 18:00 - 02:00)
-  const yesterday = hours.find((h) => h.day_of_week === prevDay);
-  if (yesterday && !yesterday.is_closed) {
-    const yo = toMinutes(yesterday.open_time);
-    const yc = toMinutes(yesterday.close_time);
-    if (yo !== null && yc !== null && yc < yo && cur < yc) return true;
-  }
-
-  const today = hours.find((h) => h.day_of_week === day);
-  if (!today || today.is_closed) return false;
-
-  const o = toMinutes(today.open_time);
-  const c = toMinutes(today.close_time);
-
-  if (o === null || c === null || o === c) return true; // tanpa jam / 24 jam
-  if (c > o) return cur >= o && cur < c;
-  return cur >= o; // melewati tengah malam: sisanya dicek lewat hari berikutnya
-};
-
-// ===== Helper: inisial nama untuk avatar =====
-const getInitials = (name: string): string => {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-};
-
-// ===== Komponen layar status (belum login, tanpa akses, dll) =====
-const primaryBtn =
-  "w-full inline-flex items-center justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors";
-const secondaryBtn =
-  "w-full inline-flex items-center justify-center px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors";
-
-function StateScreen({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl border border-slate-200/80 p-6 text-center space-y-4">
-        <div className="mx-auto w-12 h-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center">
-          <Icon className="w-6 h-6" />
-        </div>
-        <div className="space-y-1">
-          <h1 className="text-base font-extrabold text-slate-900">{title}</h1>
-          <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
-        </div>
-        <div className="flex flex-col gap-2">{children}</div>
-      </div>
-    </div>
-  );
-}
+import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { useDashboardData } from "./layout/use-dashboard-data";
+import { buildNavItems, checkIsActive } from "./layout/utils";
+import { AccessStateScreen } from "./layout/state-screen";
+import { Sidebar } from "./layout/sidebar";
+import { MobileHeader, MobileBottomNav, MobileMoreSheet } from "./layout/mobile-nav";
 
 export default function DashboardLayout({
   children,
@@ -154,272 +21,36 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
 
-  const [shop, setShop] = useState<ShopDetail | null>(null);
-  const [hours, setHours] = useState<OperatingHour[]>([]);
-  const [accessState, setAccessState] = useState<AccessState>("loading");
-  const [jobTitle, setJobTitle] = useState<string | null>(null);
-  const [allowedMenus, setAllowedMenus] = useState<string[]>([]);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  const [pendingOrders, setPendingOrders] = useState(0);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [toast, setToast] = useState<{
-    type: "success" | "error";
-    message: string;
-  } | null>(null);
+  const {
+    shop,
+    accessState,
+    jobTitle,
+    allowedMenus,
+    userInfo,
+    pendingOrders,
+    toast,
+    isOwner,
+    isEmployee,
+    refetch,
+  } = useDashboardData(storeId);
 
-  const shopRef = useRef<ShopDetail | null>(null);
-  const lastAutoRef = useRef<boolean | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Panel "Lainnya" di mobile (bottom sheet)
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const closeSheet = useCallback(() => setIsSheetOpen(false), []);
 
-  const isOwner = accessState === "owner";
-  const isEmployee = accessState === "employee";
-
+  // Tutup panel otomatis saat pindah halaman
   useEffect(() => {
-    shopRef.current = shop;
-  }, [shop]);
-
-  const showToast = (type: "success" | "error", message: string) => {
-    setToast({ type, message });
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToast(null), 3500);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    };
-  }, []);
-
-  // 1. Fetch data toko + jam operasional + peran pengguna (pemilik / karyawan) + profil
-  const fetchShopDetail = async () => {
-    if (!storeId) return;
-    setAccessState("loading");
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id ?? null;
-
-      if (!uid) {
-        setAccessState("unauthenticated");
-        return;
-      }
-
-      const [shopRes, hoursRes, empRes, profRes] = await Promise.all([
-        supabase.from("shops").select("*").eq("id", storeId).maybeSingle(),
-        supabase
-          .from("shop_operating_hours")
-          .select("day_of_week, open_time, close_time, is_closed")
-          .eq("shop_id", storeId),
-        supabase
-          .from("shop_employees")
-          .select("status, job_title, allowed_menus")
-          .eq("shop_id", storeId)
-          .eq("user_id", uid)
-          .maybeSingle(),
-        supabase
-          .from("profiles")
-          .select("full_name, avatar_url, email")
-          .eq("id", uid)
-          .maybeSingle(),
-      ]);
-
-      if (shopRes.error) throw shopRes.error;
-
-      if (!shopRes.data) {
-        setAccessState("notfound");
-        return;
-      }
-
-      if (hoursRes.error) {
-        console.error("Gagal mengambil jam operasional:", hoursRes.error.message);
-      } else {
-        setHours((hoursRes.data as OperatingHour[]) || []);
-      }
-
-      // Info akun yang sedang login (fallback ke data auth bila profil kosong)
-      const meta = (auth.user?.user_metadata ?? {}) as Record<string, string | undefined>;
-      setUserInfo({
-        name:
-          profRes.data?.full_name ||
-          meta.full_name ||
-          meta.name ||
-          auth.user?.email?.split("@")[0] ||
-          "Pengguna",
-        email: profRes.data?.email || auth.user?.email || null,
-        avatar: profRes.data?.avatar_url || meta.avatar_url || null,
-      });
-
-      setShop(shopRes.data);
-
-      if (shopRes.data.owner_id === uid) {
-        setAccessState("owner");
-      } else if (empRes.data?.status === "active") {
-        setJobTitle(empRes.data.job_title ?? null);
-        setAllowedMenus(empRes.data.allowed_menus ?? []);
-        setAccessState("employee");
-      } else {
-        setAccessState("denied");
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Terjadi kesalahan";
-      console.error("Gagal mengambil data detail toko:", message);
-      setAccessState("error");
-    }
-  };
-
-  useEffect(() => {
-    lastAutoRef.current = null;
-    fetchShopDetail();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId]);
-
-  // Tutup drawer otomatis saat pindah halaman
-  useEffect(() => {
-    setIsSidebarOpen(false);
+    setIsSheetOpen(false);
   }, [pathname]);
 
-  // Tutup drawer dengan tombol Escape
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsSidebarOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  // Kunci scroll halaman saat drawer terbuka (mobile)
-  useEffect(() => {
-    document.body.style.overflow = isSidebarOpen ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isSidebarOpen]);
-
-  // 2. Ubah status buka/tutup toko (dipakai oleh sinkronisasi otomatis jam operasional)
-  const applyStatus = async (newStatus: boolean, auto = false) => {
-    try {
-      const { error } = await supabase
-        .from("shops")
-        .update({
-          is_open: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", storeId);
-
-      if (error) throw error;
-
-      setShop((prev) => (prev ? { ...prev, is_open: newStatus } : prev));
-
-      if (auto) {
-        showToast(
-          "success",
-          newStatus
-            ? "Toko otomatis dibuka sesuai jam operasional"
-            : "Toko otomatis ditutup sesuai jam operasional"
-        );
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Gagal mengubah status toko";
-      console.error("Gagal mengubah status toko:", message);
-      showToast("error", "Gagal mengubah status toko. Silakan coba lagi.");
-    }
-  };
-
-  // 3. Sinkron otomatis dengan jam operasional (dijalankan di sisi pemilik)
-  //    - Saat data dimuat, status disesuaikan dengan jadwal
-  //    - Setelah itu dicek tiap 30 detik; status hanya berubah saat jadwal berganti
-  useEffect(() => {
-    if (!isOwner || hours.length === 0) return;
-
-    const sync = async () => {
-      const shouldBeOpen = isOpenNow(hours, new Date());
-      if (lastAutoRef.current === shouldBeOpen) return;
-      lastAutoRef.current = shouldBeOpen;
-
-      if (shopRef.current && shopRef.current.is_open !== shouldBeOpen) {
-        await applyStatus(shouldBeOpen, true);
-      }
-    };
-
-    sync();
-    const timer = setInterval(sync, 30_000);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOwner, hours, storeId]);
-
-  // 4. Jumlah pesanan yang perlu diproses (untuk badge menu Pesanan)
-  const canSeeOrders = isOwner || (isEmployee && allowedMenus.includes("orders"));
-  useEffect(() => {
-    if (!canSeeOrders) return;
-
-    const loadPending = async () => {
-      const { count } = await supabase
-        .from("orders")
-        .select("id", { count: "exact", head: true })
-        .eq("shop_id", storeId)
-        .in("status", PENDING_STATUSES);
-      setPendingOrders(count || 0);
-    };
-
-    loadPending();
-    const timer = setInterval(loadPending, 60_000);
-    return () => clearInterval(timer);
-  }, [canSeeOrders, storeId]);
-
   // ===== Menu & hak akses =====
-  const allNavItems: NavItem[] = [
-    {
-      key: "dashboard",
-      label: "Ringkasan",
-      href: `/mystore/${storeId}/dashboard`,
-      icon: LayoutDashboard,
-      exact: true,
-    },
-    {
-      key: "pos",
-      label: "Kasir (POS)",
-      href: `/mystore/${storeId}/dashboard/pos`,
-      icon: Calculator,
-    },
-    {
-      key: "orders",
-      label: "Pesanan",
-      href: `/mystore/${storeId}/dashboard/orders`,
-      icon: ShoppingBag,
-      badge: pendingOrders > 0 ? String(pendingOrders) : undefined,
-    },
-    {
-      key: "products",
-      label: "Produk",
-      href: `/mystore/${storeId}/dashboard/products`,
-      icon: Package,
-    },
-    {
-      key: "employees",
-      label: "Karyawan",
-      href: `/mystore/${storeId}/dashboard/employees`,
-      icon: Users,
-      ownerOnly: true,
-    },
-    {
-      key: "settings",
-      label: "Pengaturan",
-      href: `/mystore/${storeId}/dashboard/settings`,
-      icon: Settings,
-      ownerOnly: true,
-    },
-  ];
-
   // Pemilik: semua menu. Karyawan: hanya menu yang diizinkan pemilik (tanpa menu khusus pemilik).
+  const allNavItems = buildNavItems(storeId, pendingOrders);
   const visibleNav = allNavItems.filter((item) =>
     isOwner ? true : isEmployee && !item.ownerOnly && allowedMenus.includes(item.key)
   );
 
-  const checkIsActive = (href: string, exact = false) => {
-    if (exact) return pathname === href;
-    return pathname.startsWith(href);
-  };
-
-  const currentItem = allNavItems.find((i) => checkIsActive(i.href, i.exact));
+  const currentItem = allNavItems.find((i) => checkIsActive(pathname, i.href, i.exact));
   const canViewCurrent =
     isOwner || (isEmployee && !!currentItem && visibleNav.some((v) => v.key === currentItem.key));
 
@@ -435,95 +66,15 @@ export default function DashboardLayout({
   const roleLabel = isOwner ? "Pemilik Toko" : jobTitle ? `Karyawan · ${jobTitle}` : "Karyawan";
 
   // ================= LAYAR STATUS =================
-  if (accessState === "loading") {
+  const noMenuAccess = isEmployee && visibleNav.length === 0;
+  if ((!isOwner && !isEmployee) || noMenuAccess) {
     return (
-      <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-      </div>
-    );
-  }
-
-  if (accessState === "unauthenticated") {
-    return (
-      <StateScreen
-        icon={ShieldAlert}
-        title="Anda belum masuk"
-        description="Masuk ke akun Anda terlebih dahulu untuk membuka dashboard toko."
-      >
-        <Link href="/auth/login" className={primaryBtn}>
-          Masuk ke Akun
-        </Link>
-        <Link href="/" className={secondaryBtn}>
-          Kembali ke Beranda
-        </Link>
-      </StateScreen>
-    );
-  }
-
-  if (accessState === "notfound") {
-    return (
-      <StateScreen
-        icon={Store}
-        title="Toko tidak ditemukan"
-        description="Toko yang Anda cari tidak ada atau sudah dihapus."
-      >
-        <Link href="/" className={primaryBtn}>
-          Kembali ke Beranda
-        </Link>
-      </StateScreen>
-    );
-  }
-
-  if (accessState === "denied") {
-    return (
-      <StateScreen
-        icon={ShieldAlert}
-        title="Anda tidak punya akses"
-        description="Akun ini bukan pemilik atau karyawan aktif toko ini. Jika sudah mengajukan bergabung, tunggu persetujuan dari pemilik toko."
-      >
-        <Link href="/employee" className={primaryBtn}>
-          Dashboard Karyawan
-        </Link>
-        <Link href="/" className={secondaryBtn}>
-          Kembali ke Beranda
-        </Link>
-      </StateScreen>
-    );
-  }
-
-  if (accessState === "error") {
-    return (
-      <StateScreen
-        icon={AlertCircle}
-        title="Gagal memuat toko"
-        description="Terjadi kesalahan saat mengambil data toko. Periksa koneksi Anda lalu coba lagi."
-      >
-        <button onClick={fetchShopDetail} className={primaryBtn}>
-          Coba Lagi
-        </button>
-        <Link href="/" className={secondaryBtn}>
-          Kembali ke Beranda
-        </Link>
-      </StateScreen>
-    );
-  }
-
-  if (isEmployee && visibleNav.length === 0) {
-    return (
-      <StateScreen
-        icon={ShieldAlert}
-        title="Belum ada akses menu"
-        description="Pemilik toko belum memberi Anda akses ke menu dashboard. Hubungi pemilik toko untuk mengatur hak akses Anda."
-      >
-        <Link href="/employee" className={primaryBtn}>
-          Kembali ke Daftar Toko
-        </Link>
-      </StateScreen>
+      <AccessStateScreen state={accessState} noMenuAccess={noMenuAccess} onRetry={refetch} />
     );
   }
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 text-slate-800 font-sans antialiased flex flex-col md:flex-row">
+    <div className="w-full h-dvh overflow-hidden md:h-auto md:min-h-screen md:overflow-visible bg-slate-50 text-slate-800 font-sans antialiased flex flex-col md:flex-row [--mobile-nav-h:calc(4rem_+_env(safe-area-inset-bottom))] md:[--mobile-nav-h:0px] [--mobile-header-h:calc(4.5rem_+_env(safe-area-inset-top))] md:[--mobile-header-h:0px]">
       {/* ================= TOAST ================= */}
       {toast && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4 w-full max-w-sm pointer-events-none">
@@ -544,209 +95,63 @@ export default function DashboardLayout({
         </div>
       )}
 
-      {/* ================= HEADER (Mobile Only) ================= */}
-      <header className="md:hidden sticky top-0 z-30 h-14 bg-white border-b border-slate-200 px-3 flex items-center gap-3 shadow-xs">
-        <button
-          onClick={() => setIsSidebarOpen(true)}
-          aria-label="Buka menu"
-          className="p-2 -ml-1 rounded-xl text-slate-600 hover:bg-slate-100 transition-colors"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
-
-        <div className="min-w-0 flex-1">
-          <h1 className="font-extrabold text-sm text-slate-900 truncate">
-            {shop?.name || `Toko #${storeId}`}
-          </h1>
-        </div>
-
-        <span
-          className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-            shop?.is_open
-              ? "bg-emerald-50 text-emerald-700"
-              : "bg-rose-50 text-rose-700"
-          }`}
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              shop?.is_open ? "bg-emerald-500" : "bg-rose-500"
-            }`}
-          />
-          {shop?.is_open ? "Buka" : "Tutup"}
-        </span>
-      </header>
-
-      {/* ================= OVERLAY (Mobile Only) ================= */}
-      <div
-        onClick={() => setIsSidebarOpen(false)}
-        className={`md:hidden fixed inset-0 z-40 bg-slate-900/50 transition-opacity duration-300 ${
-          isSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+      {/* Mobile: header hijau, tetap di atas (bukan fixed, jadi tidak menimpa konten) */}
+      <MobileHeader
+        shop={shop}
+        storeId={storeId}
+        userInfo={userInfo}
+        homeHref={homeHref}
+        homeLabel={homeLabel}
+        onOpenMenu={() => setIsSheetOpen(true)}
       />
 
-      {/* ================= SIDEBAR (Drawer di mobile, tetap di desktop) ================= */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 w-4/5 max-w-sm md:w-72 md:max-w-none bg-white border-r border-slate-200/80 shrink-0 flex flex-col shadow-2xl md:shadow-xs transition-transform duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:z-30 md:translate-x-0 ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        {/* Header Sidebar: [<] [logo toko] [nama & kategori] */}
-        <div className="shrink-0 px-3 py-3.5 border-b border-slate-100 flex items-center gap-2.5">
-          <Link
-            href={homeHref}
-            aria-label={homeLabel}
-            title={homeLabel}
-            className="shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Link>
+      {/* Desktop saja: sidebar tetap */}
+      <Sidebar
+        storeId={storeId}
+        shop={shop}
+        userInfo={userInfo}
+        items={visibleNav}
+        pathname={pathname}
+        homeHref={homeHref}
+        homeLabel={homeLabel}
+        roleLabel={roleLabel}
+      />
 
-          {shop?.avatar_url ? (
-            <img
-              src={shop.avatar_url}
-              alt={shop.name}
-              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
-            />
+      {/* ================= AREA KONTEN =================
+          Di mobile hanya area ini yang di-scroll; header ada di atasnya dan bottom nav di bawahnya
+          (keduanya bukan fixed), jadi elemen sticky top/bottom di halaman lain berhenti
+          tepat di bawah header dan di atas bottom nav. */}
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-y-auto overscroll-contain md:overflow-visible">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
+          {canViewCurrent ? (
+            children
           ) : (
-            <div className="w-10 h-10 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
-              <Store className="w-5 h-5" />
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
             </div>
           )}
+        </main>
+      </div>
 
-          <div className="min-w-0 flex-1">
-            <h2 className="font-extrabold text-sm text-slate-900 truncate leading-tight">
-              {shop?.name || `Toko #${storeId}`}
-            </h2>
-            <p className="text-[11px] text-slate-400 truncate mt-0.5">
-              {shop?.category || "Umum"}
-            </p>
-          </div>
+      {/* Mobile: bottom navigation (maks. 5 tab, sisanya di "Lainnya") */}
+      <MobileBottomNav
+        items={visibleNav}
+        pathname={pathname}
+        isMenuOpen={isSheetOpen}
+        onOpenMenu={() => setIsSheetOpen(true)}
+      />
 
-          <button
-            onClick={() => setIsSidebarOpen(false)}
-            aria-label="Tutup menu"
-            className="md:hidden shrink-0 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Navigasi - pusat perhatian (scroll sendiri bila menu panjang) */}
-        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain no-scrollbar px-4 pt-4 pb-4">
-          <p className="px-2 mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">
-            Menu Navigasi
-          </p>
-          <div className="space-y-2">
-            {visibleNav.map((item) => {
-              const Icon = item.icon;
-              const isActive = checkIsActive(item.href, item.exact);
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`group relative w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm transition-all ${
-                    isActive
-                      ? "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/25"
-                      : "bg-slate-50 text-slate-800 font-semibold hover:bg-emerald-50 hover:text-emerald-700"
-                  }`}
-                >
-                  <span
-                    className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 transition-colors ${
-                      isActive
-                        ? "bg-white/20 text-white"
-                        : "bg-white text-slate-500 shadow-xs group-hover:text-emerald-600"
-                    }`}
-                  >
-                    <Icon className="w-5 h-5" />
-                  </span>
-                  <span className="flex-1 min-w-0 truncate">{item.label}</span>
-                  {item.badge && (
-                    <span
-                      className={`min-w-5 text-center text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                        isActive
-                          ? "bg-white text-emerald-700"
-                          : "bg-emerald-100 text-emerald-800"
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                  <ChevronRight
-                    className={`w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5 ${
-                      isActive ? "text-white/80" : "text-slate-300"
-                    }`}
-                  />
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
-
-        {/* Footer Sidebar: Card akun (HIJAU) dengan ikon hiasan */}
-        <div className="shrink-0 p-3 border-t border-slate-100">
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-md shadow-emerald-600/25 p-3 space-y-3">
-            {/* ===== Hiasan (tidak interaktif) ===== */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/10"
-            />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -bottom-8 -left-6 w-20 h-20 rounded-full bg-white/10"
-            />
-            <Store
-              aria-hidden="true"
-              className="pointer-events-none absolute -top-1 -right-1 w-16 h-16 text-white/15 rotate-12"
-            />
-            <Sparkles
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-2.5 right-3 w-4 h-4 text-white/30"
-            />
-
-            {/* Siapa yang login */}
-            <div className="relative flex items-center gap-3">
-              {userInfo?.avatar ? (
-                <img
-                  src={userInfo.avatar}
-                  alt={userInfo.name}
-                  className="w-10 h-10 rounded-full object-cover border-2 border-white/40 shrink-0"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-white/20 text-white border-2 border-white/30 flex items-center justify-center text-xs font-extrabold shrink-0">
-                  {getInitials(userInfo?.name || "?")}
-                </div>
-              )}
-              <div className="min-w-0 flex-1 pr-8">
-                <p className="text-xs font-extrabold text-white truncate leading-tight">
-                  {userInfo?.name || "Pengguna"}
-                </p>
-                {userInfo?.email && (
-                  <p className="text-[10px] text-emerald-100 truncate mt-0.5">
-                    {userInfo.email}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <span className="relative inline-flex max-w-full items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/15 text-white border border-white/25">
-              <span className="truncate">{roleLabel}</span>
-            </span>
-          </div>
-        </div>
-      </aside>
-
-      {/* ================= MAIN CONTENT ================= */}
-      <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-        {canViewCurrent ? (
-          children
-        ) : (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-          </div>
-        )}
-      </main>
+      {/* Mobile: panel "Lainnya" + akun (dibuka dari tab Lainnya atau avatar) */}
+      <MobileMoreSheet
+        isOpen={isSheetOpen}
+        onClose={closeSheet}
+        items={visibleNav}
+        pathname={pathname}
+        userInfo={userInfo}
+        roleLabel={roleLabel}
+        homeHref={homeHref}
+        homeLabel={homeLabel}
+      />
     </div>
   );
 }

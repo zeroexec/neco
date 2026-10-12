@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import {
   Trash2,
   Minus,
@@ -9,12 +9,13 @@ import {
   Loader2,
   X,
   CheckCircle2,
-  Banknote,
-  QrCode,
-  Landmark,
+  ShoppingBag,
 } from "lucide-react";
+import { Modal } from "./PosModals";
+import { formatRp } from "./utils";
+import { useKeyboardInset } from "./useKeyboardInset";
 
-export interface CartItem {
+export interface PanelCartItem {
   id: string; // products.id (uuid)
   name: string;
   price: number;
@@ -22,7 +23,8 @@ export interface CartItem {
   stock: number | null; // null = tanpa batas stok (products.track_stock = false)
 }
 
-export type PaymentMethod = "cash" | "qris" | "transfer";
+// Pembayaran hanya tunai
+export type PaymentMethod = "cash";
 
 /** Data pembayaran yang dikirim ke parent, dipetakan ke kolom tabel `orders` */
 export interface CheckoutPayment {
@@ -35,7 +37,7 @@ export interface CheckoutPayment {
 }
 
 export interface CartPanelProps {
-  cart: CartItem[];
+  cart: PanelCartItem[];
   onUpdateQuantity: (id: string, delta: number) => void;
   onClearCart: () => void;
   onCheckout: (payment: CheckoutPayment) => void;
@@ -52,57 +54,58 @@ export interface CartPanelProps {
 
 const DENOMINATIONS = [5000, 10000, 20000, 50000, 100000];
 
-const PAYMENT_OPTIONS: {
-  value: PaymentMethod;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-}[] = [
-  { value: "cash", label: "Tunai", icon: Banknote },
-  { value: "qris", label: "QRIS", icon: QrCode },
-  { value: "transfer", label: "Transfer", icon: Landmark },
-];
+// Saat keyboard HP muncul, pastikan input yang difokus tidak tertutup
+const revealOnFocus = (e: React.FocusEvent<HTMLElement>) => {
+  const el = e.currentTarget;
+  window.setTimeout(() => el.scrollIntoView({ block: "nearest", behavior: "smooth" }), 280);
+};
 
-const formatRp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
+// Enter = selesai: tutup keyboard
+const blurOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === "Enter") e.currentTarget.blur();
+};
 
-/* ---------- Modal dasar (custom, pengganti alert/confirm browser) ---------- */
+/* ---------- Tombol keranjang bulat (mobile) ---------- */
 
-export function Modal({
-  open,
-  onClose,
-  children,
+/**
+ * Tombol bulat di pojok kanan bawah. Posisinya dihitung dari --mobile-nav-h
+ * (tinggi bottom nav yang diset di layout dashboard), jadi selalu berada tepat di atas
+ * bottom nav dan tidak tertimpa. Di desktop (lg ke atas) tombol disembunyikan karena
+ * panel keranjang sudah tampil permanen.
+ */
+function CartFabBase({
+  count,
+  total,
+  onClick,
 }: {
-  open: boolean;
-  onClose: () => void;
-  children: React.ReactNode;
+  count: number;
+  total: number;
+  onClick: () => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Buka keranjang, ${count} barang, total ${formatRp(total)}`}
+      className="lg:hidden fixed right-4 bottom-[calc(var(--mobile-nav-h)_+_1rem)] z-30 w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 ring-4 ring-white active:scale-95 transition-transform focus-visible:outline-2 focus-visible:outline-emerald-700"
     >
-      <div className="absolute inset-0 bg-slate-900/50" onClick={onClose} />
-      <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-4 space-y-3">
-        {children}
-      </div>
-    </div>
+      <ShoppingBag className="w-6 h-6" />
+      {count > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-white text-emerald-700 text-[10px] font-extrabold flex items-center justify-center shadow-md ring-2 ring-emerald-600">
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+    </button>
   );
 }
 
-/* ---------- Panel keranjang ---------- */
+export const CartFab = memo(CartFabBase);
 
-export default function CartPanel({
+/* ---------- Panel keranjang ---------- */
+// Mobile: bottom sheet yang naik dari bawah (dibuka lewat CartFab).
+// Desktop (lg): kolom tetap di sisi kanan.
+
+function CartPanel({
   cart,
   onUpdateQuantity,
   onClearCart,
@@ -113,14 +116,19 @@ export default function CartPanel({
   onClose,
 }: CartPanelProps) {
   const [cashGiven, setCashGiven] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [notes, setNotes] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  // Keyboard HP: sheet naik di atas keyboard & tingginya mengikuti area yang terlihat
+  const { inset: kbInset, height: kbHeight } = useKeyboardInset();
+  const sheetStyle =
+    kbInset > 0
+      ? ({ "--kb": `${kbInset}px`, "--vvh": `${kbHeight}px` } as React.CSSProperties)
+      : undefined;
 
   const totalItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const grandTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const isCash = paymentMethod === "cash";
   const cashNumber = parseInt(cashGiven, 10) || 0;
   const changeAmount = cashNumber - grandTotal;
   const isEnough = cashNumber >= grandTotal;
@@ -130,9 +138,18 @@ export default function CartPanel({
     if (cart.length === 0) {
       setCashGiven("");
       setNotes("");
-      setPaymentMethod("cash");
     }
   }, [cart.length]);
+
+  // Tutup sheet dengan tombol Escape (mobile)
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !showClearConfirm) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose, showClearConfirm]);
 
   // Template nominal: uang pas + pembulatan ke atas ke pecahan umum
   const quickAmounts = useMemo(() => {
@@ -148,7 +165,7 @@ export default function CartPanel({
     setCashGiven(value.replace(/\D/g, "").slice(0, 10));
   };
 
-  const handleIncrement = (item: CartItem) => {
+  const handleIncrement = (item: PanelCartItem) => {
     if (item.stock !== null && item.quantity + 1 > item.stock) {
       onStockShortage(item.id, true);
       return;
@@ -165,55 +182,73 @@ export default function CartPanel({
     }
 
     onCheckout({
-      paymentMethod,
+      paymentMethod: "cash",
       subtotal: grandTotal,
       totalAmount: grandTotal,
-      cashGiven: isCash ? cashNumber : null,
-      changeAmount: isCash ? changeAmount : null,
+      cashGiven: cashNumber,
+      changeAmount,
       notes: notes.trim() ? notes.trim() : null,
     });
   };
 
-  const canCheckout =
-    cart.length > 0 && !isSubmitting && (!isCash || isEnough);
+  const canCheckout = cart.length > 0 && !isSubmitting && isEnough;
 
   return (
     <>
+      {/* Latar gelap di belakang sheet (mobile) */}
       <div
-        className={`fixed inset-y-0 right-0 z-40 w-full sm:w-96 bg-white border-l border-slate-200 flex flex-col transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
-          isOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+        onClick={onClose}
+        className={`lg:hidden fixed inset-0 z-40 bg-slate-900/50 transition-opacity duration-300 ${
+          isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      />
+
+      <aside
+        aria-label="Keranjang"
+        style={sheetStyle}
+        className={`fixed inset-x-0 bottom-[var(--kb,0px)] z-40 flex max-h-[calc(var(--vvh,100dvh)*0.94)] flex-col rounded-t-3xl bg-white shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:max-h-none lg:h-full lg:w-96 lg:shrink-0 lg:translate-y-0 lg:rounded-none lg:border-l lg:border-slate-200 lg:shadow-none ${
+          isOpen ? "translate-y-0" : "translate-y-full pointer-events-none lg:pointer-events-auto"
         }`}
       >
+        {/* Handle sheet (mobile) */}
+        <div className="lg:hidden mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-slate-200" />
+
         {/* Header */}
-        <div className="p-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="lg:hidden p-1 rounded-lg text-slate-400 hover:bg-slate-100"
-            >
-              <X className="w-5 h-5" />
-            </button>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <ShoppingBag className="w-5 h-5" />
+            </span>
             <div>
-              <h2 className="font-bold text-slate-900 text-sm">Transaksi Kasir</h2>
+              <h2 className="font-extrabold text-slate-900 text-sm">Transaksi Kasir</h2>
               <p className="text-[11px] text-slate-400">{totalItemCount} item dimasukkan</p>
             </div>
           </div>
-          {cart.length > 0 && (
+          <div className="flex items-center gap-1">
+            {cart.length > 0 && (
+              <button
+                onClick={() => setShowClearConfirm(true)}
+                className="px-2.5 py-1.5 rounded-xl text-xs text-rose-600 font-semibold hover:bg-rose-50 flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Batal</span>
+              </button>
+            )}
             <button
-              onClick={() => setShowClearConfirm(true)}
-              className="text-xs text-rose-600 font-semibold hover:underline flex items-center gap-1"
+              onClick={onClose}
+              aria-label="Tutup keranjang"
+              className="lg:hidden p-2 rounded-xl text-slate-400 hover:bg-slate-100"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Batal</span>
+              <X className="w-5 h-5" />
             </button>
-          )}
+          </div>
         </div>
 
         {/* Daftar item */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 min-h-[9rem] overflow-y-auto overscroll-contain p-3.5 lg:p-3 space-y-2.5 lg:space-y-2">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-2">
-              <Receipt className="w-10 h-10 stroke-1 text-slate-300" />
+            <div className="flex flex-col items-center justify-center text-center py-10 lg:h-full lg:py-6 text-slate-400 space-y-2">
+              <Receipt className="w-10 h-10 stroke-1 text-emerald-200" />
               <p className="text-xs font-medium">Belum ada barang dipilih</p>
             </div>
           ) : (
@@ -223,15 +258,13 @@ export default function CartPanel({
               return (
                 <div
                   key={item.id}
-                  className={`flex items-center justify-between gap-3 p-2.5 rounded-xl border ${
-                    overStock
-                      ? "bg-rose-50 border-rose-200"
-                      : "bg-slate-50 border-slate-100"
+                  className={`flex items-center justify-between gap-3 p-3.5 lg:p-3 rounded-2xl border ${
+                    overStock ? "bg-rose-50 border-rose-200" : "bg-slate-50 border-slate-100"
                   }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <h4 className="text-xs font-bold text-slate-800 truncate">{item.name}</h4>
-                    <p className="text-[11px] font-semibold text-emerald-600">
+                    <h4 className="text-[13px] lg:text-xs font-bold text-slate-800 truncate">{item.name}</h4>
+                    <p className="text-xs lg:text-[11px] font-semibold text-emerald-600">
                       {formatRp(item.price * item.quantity)}
                     </p>
                     <p
@@ -243,17 +276,19 @@ export default function CartPanel({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-lg border border-slate-200">
+                  <div className="flex items-center gap-1 shrink-0 bg-white p-1 rounded-full border border-slate-200">
                     <button
                       onClick={() => onUpdateQuantity(item.id, -1)}
-                      className="p-0.5 rounded-md text-slate-600 hover:bg-slate-100"
+                      aria-label={`Kurangi ${item.name}`}
+                      className="w-9 h-9 lg:w-7 lg:h-7 rounded-full text-slate-600 hover:bg-slate-100 flex items-center justify-center"
                     >
                       <Minus className="w-3.5 h-3.5" />
                     </button>
-                    <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
+                    <span className="text-sm lg:text-xs font-bold w-7 lg:w-6 text-center">{item.quantity}</span>
                     <button
                       onClick={() => handleIncrement(item)}
-                      className="p-0.5 rounded-md text-slate-600 hover:bg-slate-100"
+                      aria-label={`Tambah ${item.name}`}
+                      className="w-9 h-9 lg:w-7 lg:h-7 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 flex items-center justify-center"
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>
@@ -264,83 +299,64 @@ export default function CartPanel({
           )}
         </div>
 
-        {/* Total, Pembayaran & Bayar */}
-        <div className="p-3.5 border-t border-slate-100 space-y-2.5 bg-slate-50/50 shrink-0">
-          <div className="flex justify-between font-extrabold text-base text-slate-900">
-            <span>Total</span>
-            <span className="text-emerald-600">{formatRp(grandTotal)}</span>
+        {/* Total, pembayaran & bayar */}
+        <div className={`px-4 pt-3 ${
+            kbInset > 0 ? "pb-3" : "pb-[calc(0.875rem_+_env(safe-area-inset-bottom))]"
+          } lg:pb-3.5 border-t border-slate-100 space-y-2.5 bg-slate-50/60 shrink-0 overflow-y-auto overscroll-contain max-h-[calc(var(--vvh,100dvh)*0.55)] lg:max-h-none`}>
+          <div className="flex items-center justify-between rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 px-4 py-3 text-white shadow-md shadow-emerald-600/25">
+            <span className="text-xs font-semibold text-emerald-50">Total</span>
+            <span className="text-lg font-extrabold">{formatRp(grandTotal)}</span>
           </div>
 
           {cart.length > 0 && (
             <div className="space-y-2">
-              {/* Metode pembayaran */}
-              <div className="grid grid-cols-3 gap-1.5">
-                {PAYMENT_OPTIONS.map(({ value, label, icon: Icon }) => (
+              {/* Uang diterima */}
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                  Rp
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  enterKeyHint="done"
+                  autoComplete="off"
+                  placeholder="Uang diterima"
+                  value={cashNumber > 0 ? cashNumber.toLocaleString("id-ID") : ""}
+                  onChange={(e) => handleCashInput(e.target.value)}
+                  onFocus={revealOnFocus}
+                  onKeyDown={blurOnEnter}
+                  className="w-full pl-10 pr-3 py-3 lg:py-2.5 text-base lg:text-sm bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-bold text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-4 gap-1.5">
+                {quickAmounts.map((amt) => (
                   <button
-                    key={value}
+                    key={amt}
                     type="button"
-                    onClick={() => setPaymentMethod(value)}
-                    className={`py-1.5 text-[11px] font-bold rounded-lg border transition-colors flex items-center justify-center gap-1 ${
-                      paymentMethod === value
+                    onClick={() => setCashGiven(String(amt))}
+                    className={`py-2.5 lg:py-2 text-xs lg:text-[11px] font-bold rounded-xl border transition-colors ${
+                      cashNumber === amt
                         ? "bg-emerald-600 text-white border-emerald-600"
-                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700"
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{label}</span>
+                    {amt === grandTotal
+                      ? "Uang Pas"
+                      : `${(amt / 1000).toLocaleString("id-ID")}k`}
                   </button>
                 ))}
               </div>
 
-              {/* Khusus tunai: uang diterima, template nominal, kembalian */}
-              {isCash && (
-                <>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                      Rp
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="Uang diterima"
-                      value={cashNumber > 0 ? cashNumber.toLocaleString("id-ID") : ""}
-                      onChange={(e) => handleCashInput(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-bold text-slate-800"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {quickAmounts.map((amt) => (
-                      <button
-                        key={amt}
-                        type="button"
-                        onClick={() => setCashGiven(String(amt))}
-                        className={`py-1.5 text-[11px] font-bold rounded-lg border transition-colors ${
-                          cashNumber === amt
-                            ? "bg-emerald-600 text-white border-emerald-600"
-                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                        }`}
-                      >
-                        {amt === grandTotal
-                          ? "Uang Pas"
-                          : `${(amt / 1000).toLocaleString("id-ID")}k`}
-                      </button>
-                    ))}
-                  </div>
-
-                  {cashNumber > 0 && (
-                    <div
-                      className={`flex justify-between items-center px-3 py-2 rounded-xl text-xs font-bold ${
-                        isEnough
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-rose-50 text-rose-700"
-                      }`}
-                    >
-                      <span>{isEnough ? "Kembalian" : "Kurang"}</span>
-                      <span className="text-sm">{formatRp(Math.abs(changeAmount))}</span>
-                    </div>
-                  )}
-                </>
+              {cashNumber > 0 && (
+                <div
+                  className={`flex justify-between items-center px-3.5 py-2.5 rounded-2xl text-xs font-bold ${
+                    isEnough ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  <span>{isEnough ? "Kembalian" : "Kurang"}</span>
+                  <span className="text-sm">{formatRp(Math.abs(changeAmount))}</span>
+                </div>
               )}
 
               {/* Catatan (opsional) */}
@@ -349,8 +365,11 @@ export default function CartPanel({
                 placeholder="Catatan (opsional)"
                 value={notes}
                 maxLength={200}
+                enterKeyHint="done"
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
+                onFocus={revealOnFocus}
+                onKeyDown={blurOnEnter}
+                className="w-full px-3.5 py-3 lg:py-2.5 text-base lg:text-xs bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
               />
             </div>
           )}
@@ -358,7 +377,7 @@ export default function CartPanel({
           <button
             disabled={!canCheckout}
             onClick={handleCheckout}
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-xl transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3.5 lg:py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold rounded-2xl shadow-md shadow-emerald-600/25 disabled:shadow-none transition-colors flex items-center justify-center gap-2 text-sm lg:text-xs"
           >
             {isSubmitting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -368,25 +387,23 @@ export default function CartPanel({
             <span>Bayar</span>
           </button>
         </div>
-      </div>
+      </aside>
 
       {/* Modal konfirmasi batalkan transaksi */}
       <Modal open={showClearConfirm} onClose={() => setShowClearConfirm(false)}>
         <div className="flex items-start gap-3">
-          <div className="p-2 rounded-xl bg-rose-50 text-rose-600 shrink-0">
+          <div className="p-2.5 rounded-2xl bg-rose-50 text-rose-600 shrink-0">
             <Trash2 className="w-5 h-5" />
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-900">Batalkan transaksi?</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Semua barang di keranjang akan dihapus.
-            </p>
+            <p className="text-xs text-slate-500 mt-0.5">Semua barang di keranjang akan dihapus.</p>
           </div>
         </div>
         <div className="flex gap-2 pt-1">
           <button
             onClick={() => setShowClearConfirm(false)}
-            className="flex-1 py-2 text-xs font-bold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100"
+            className="flex-1 py-2.5 text-xs font-bold rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-100"
           >
             Kembali
           </button>
@@ -395,7 +412,7 @@ export default function CartPanel({
               onClearCart();
               setShowClearConfirm(false);
             }}
-            className="flex-1 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white"
+            className="flex-1 py-2.5 text-xs font-bold rounded-2xl bg-rose-600 hover:bg-rose-700 text-white"
           >
             Ya, Batalkan
           </button>
@@ -404,3 +421,5 @@ export default function CartPanel({
     </>
   );
 }
+
+export default memo(CartPanel);
